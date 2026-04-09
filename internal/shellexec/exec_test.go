@@ -2,7 +2,9 @@ package shellexec
 
 import (
 	"context"
+	"errors"
 	"testing"
+	"time"
 )
 
 func TestRunEcho(t *testing.T) {
@@ -44,5 +46,24 @@ func TestRunNonzeroExit(t *testing.T) {
 	}
 	if result.ExitCode != 7 {
 		t.Errorf("ExitCode = %d, want 7", result.ExitCode)
+	}
+}
+
+func TestRunTimeout(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+	result, err := Run(ctx, "sleep", "5")
+	elapsed := time.Since(start)
+
+	if elapsed > time.Second {
+		t.Errorf("Run took %v, expected to be killed well under 1s", elapsed)
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("err = %v, want context.DeadlineExceeded", err)
+	}
+	if result != nil {
+		t.Errorf("result = %+v, want nil", result)
 	}
 }

@@ -25,6 +25,10 @@ func Run(ctx context.Context, name string, args ...string) (*Result, error) {
 		stderr = exitErr.Stderr
 	}
 
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return nil, ctxErr
+	}
+
 	return &Result{
 		Stdout:   string(output),
 		Stderr:   string(stderr),
