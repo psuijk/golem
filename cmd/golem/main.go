@@ -30,5 +30,4 @@ func main() {
 
 	fmt.Printf("text:    %s\n", result.Text)
 	fmt.Printf("isError: %v\n", result.IsError)
-
 }
