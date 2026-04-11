@@ -105,3 +105,38 @@ MCP acts as the **"USB-C" for the agent**, decoupling tool servers from the agen
   - **Tools** - Executable actions.
   - **Resources** - Data access.
   - **Prompts** - Reusable templates.
+
+
+## 0. golem-Specific Commitments
+
+The sections below describe the architecture golem is being built toward.
+The following commitments are more specific to golem's design and take
+precedence when they conflict with the general descriptions:
+
+- **Provider-agnostic LLM layer**: The LLM is the most replaceable component
+  in the system, not the most central. Canonical message, content, and tool
+  types live in golem's own code (`internal/llm/`). Provider adapters
+  (`internal/llm/anthropic/`, `internal/llm/ollama/`, etc.) translate between
+  the canonical types and each provider's wire format. The agent loop never
+  imports a provider package directly.
+
+- **Decoupled agent loop and UI**: The agent loop runs as a goroutine and
+  communicates with consumers (UI, logger, tests) through a typed event
+  channel. The loop has no UI awareness; the UI has no loop awareness. Each
+  is independently testable.
+
+- **LLM-removable architecture**: The tool dispatcher, registry, conversation
+  store, and approval gate are all designed to function and be tested with
+  the LLM removed entirely. The LLM is one possible source of tool calls,
+  alongside test fixtures and a REPL. This is the inversion of the
+  "LLM-in-the-loop" framing in §1: golem's loop coordinates *whatever
+  produces tool calls*, and the LLM is one such producer.
+
+- **Concrete-first abstraction**: Default to writing concrete code without
+  interfaces, and extract abstractions when you have enough information to
+  design them well. The usual signals to extract are: (a) two concrete
+  implementations exist and you can compare them, (b) testing requires a
+  seam to mock an external dependency, or (c) an external framework requires
+  you to satisfy a specific interface. Don't extract because you anticipate
+  needing flexibility someday — that path produces interfaces shaped by
+  imagination instead of requirements.
