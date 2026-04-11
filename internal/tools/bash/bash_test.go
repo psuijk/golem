@@ -82,3 +82,19 @@ func TestExecuteNegativeTimeout(t *testing.T) {
 		t.Errorf("Text = %q, command should not have executed", result.Text)
 	}
 }
+
+func TestExecutePerCallTimeoutOverride(t *testing.T) {
+	bt := bash.New(60 * time.Second)
+	input := json.RawMessage(`{"command": "sleep 5", "timeout_seconds": 1}`)
+
+	start := time.Now()
+	result, err := bt.Execute(context.Background(), input)
+	elapsed := time.Since(start)
+
+	if elapsed > 3*time.Second {
+		t.Errorf("Execute took %v, expected per-call timeout (~1s) to apply", elapsed)
+	}
+	if err == nil && (result == nil || !result.IsError) {
+		t.Errorf("expected timeout failure, got result=%+v err=%v", result, err)
+	}
+}
