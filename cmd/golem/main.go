@@ -2,24 +2,33 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
-	"os"
+	"log"
+	"time"
 
-	"github.com/psuijk/golem/internal/shellexec"
+	"github.com/psuijk/golem/internal/tool"
+	"github.com/psuijk/golem/internal/tools/bash"
 )
 
 func main() {
 
 	ctx := context.Background()
 
-	result, err := shellexec.Run(ctx, "echo", "hello", "world")
+	r := tool.NewRegistry()
 
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "error:", err)
-		os.Exit(1)
+	if err := r.Register(bash.New(30 * time.Second)); err != nil {
+		log.Fatalf("register bash tool: %v", err)
 	}
 
-	fmt.Printf("stdout: %q\n", result.Stdout)
-	fmt.Printf("stderr: %q\n", result.Stderr)
-	fmt.Printf("exit:   %d\n", result.ExitCode)
+	d := tool.NewDispatcher(r)
+
+	result, err := d.Dispatch(ctx, "bash", json.RawMessage(`{"command": "echo hello world"}`))
+	if err != nil {
+		log.Fatalf("dispatch: %v", err)
+	}
+
+	fmt.Printf("text:    %s\n", result.Text)
+	fmt.Printf("isError: %v\n", result.IsError)
+
 }
