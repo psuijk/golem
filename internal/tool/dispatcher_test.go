@@ -1,4 +1,4 @@
-package tool
+package tool_test
 
 import (
 	"context"
@@ -6,11 +6,13 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"github.com/psuijk/golem/internal/tool"
 )
 
 type fakeTool struct {
 	name   string
-	result *Result
+	result *tool.Result
 	err    error
 }
 
@@ -26,20 +28,20 @@ func (f fakeTool) Schema() json.RawMessage {
 	return nil
 }
 
-func (f fakeTool) Execute(ctx context.Context, input json.RawMessage) (*Result, error) {
+func (f fakeTool) Execute(ctx context.Context, input json.RawMessage) (*tool.Result, error) {
 	return f.result, f.err
 }
 
-var _ Tool = fakeTool{}
+var _ tool.Tool = fakeTool{}
 
 func TestDispatchHappyPath(t *testing.T) {
-	registry := NewRegistry()
+	registry := tool.NewRegistry()
 	registry.Register(fakeTool{
 		name:   "echo",
-		result: &Result{Text: "hello", IsError: false},
+		result: &tool.Result{Text: "hello", IsError: false},
 		err:    nil,
 	})
-	dispatcher := NewDispatcher(registry)
+	dispatcher := tool.NewDispatcher(registry)
 
 	result, err := dispatcher.Dispatch(context.Background(), "echo", nil)
 	if err != nil {
@@ -54,8 +56,8 @@ func TestDispatchHappyPath(t *testing.T) {
 }
 
 func TestDispatchToolNotFound(t *testing.T) {
-	registry := NewRegistry()
-	dispatcher := NewDispatcher(registry)
+	registry := tool.NewRegistry()
+	dispatcher := tool.NewDispatcher(registry)
 
 	result, err := dispatcher.Dispatch(context.Background(), "nonexistent", nil)
 	if err == nil {
@@ -67,16 +69,16 @@ func TestDispatchToolNotFound(t *testing.T) {
 }
 
 func TestDispatchExecuteError(t *testing.T) {
-	registry := NewRegistry()
+	registry := tool.NewRegistry()
 	registry.Register(fakeTool{
 		name:   "broken",
 		result: nil,
-		err:    ErrToolNotFound,
+		err:    tool.ErrToolNotFound,
 	})
-	dispatcher := NewDispatcher(registry)
+	dispatcher := tool.NewDispatcher(registry)
 
 	result, err := dispatcher.Dispatch(context.Background(), "broken", nil)
-	if !errors.Is(err, ErrToolNotFound) {
+	if !errors.Is(err, tool.ErrToolNotFound) {
 		t.Fatalf("err = %v, want ErrToolNotFound", err)
 	}
 	if result != nil {
