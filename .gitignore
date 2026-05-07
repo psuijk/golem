@@ -1,0 +1,31 @@
+# Binary
+golem
+
+# Test binary
+*.test
+
+# Go build cache
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Go coverage
+*.out
+coverage.html
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Environment
+.env
+.env.*
+
+# OS
+.DS_Store
+Thumbs.db
