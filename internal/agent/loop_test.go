@@ -50,19 +50,48 @@ func TestLoopHappyPath(t *testing.T) {
 		{Name: "readfile", Input: json.RawMessage(fmt.Sprintf(`{"path":%q}`, path))},
 	})
 
+	var collected []event.Event
 	for evt := range events {
-		switch e := evt.(type) {
-		case event.ToolCallStartedEvent:
-			t.Logf("[started]   %s(%s)\n", e.Name, e.Input)
-		case event.ToolCallCompletedEvent:
-			if e.Err != nil {
-				t.Errorf("[error]     %s: %v\n", e.Name, e.Err)
-			}
-			t.Logf("[completed] %s -> %+v\n", e.Name, e.Result)
-		case event.TurnCompletedEvent:
-			t.Logf("[done]      turn completed")
-			return
+		collected = append(collected, evt)
+	}
+
+	// 3 tool calls: started, completed x3 + turn completed = 7 events
+	if len(collected) != 7 {
+		t.Fatalf("got %d events, want 7", len(collected))
+	}
+
+	// Store should have 6 messages: 3 AssistantMessage + 3 ToolResultMessage
+	msgs := store.Messages()
+	if len(msgs) != 6 {
+		t.Fatalf("store has %d messages, want 6", len(msgs))
+	}
+
+	// Verify alternating pattern: AssistantMessage, ToolResultMessage, ...
+	for i := 0; i < 6; i += 2 {
+		am, ok := msgs[i].(conversation.AssistantMessage)
+		if !ok {
+			t.Fatalf("msgs[%d] is %T, want AssistantMessage", i, msgs[i])
 		}
+		if len(am.ToolCalls) != 1 {
+			t.Errorf("msgs[%d] ToolCalls length = %d, want 1", i, len(am.ToolCalls))
+		}
+
+		tr, ok := msgs[i+1].(conversation.ToolResultMessage)
+		if !ok {
+			t.Fatalf("msgs[%d] is %T, want ToolResultMessage", i+1, msgs[i+1])
+		}
+		if tr.Content == "" {
+			t.Errorf("msgs[%d] Content is empty", i+1)
+		}
+		if tr.ToolCallID != am.ToolCalls[0].ID {
+			t.Errorf("msgs[%d] ToolCallID = %q, want %q", i+1, tr.ToolCallID, am.ToolCalls[0].ID)
+		}
+	}
+
+	// Spot-check first tool call is bash
+	am0 := msgs[0].(conversation.AssistantMessage)
+	if am0.ToolCalls[0].Name != "bash" {
+		t.Errorf("first tool call Name = %q, want %q", am0.ToolCalls[0].Name, "bash")
 	}
 }
 
