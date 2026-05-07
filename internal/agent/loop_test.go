@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/psuijk/golem/internal/agent"
+	"github.com/psuijk/golem/internal/conversation"
 	"github.com/psuijk/golem/internal/event"
 	"github.com/psuijk/golem/internal/tool"
 	"github.com/psuijk/golem/internal/tools/bash"
@@ -35,8 +36,8 @@ func TestLoopHappyPath(t *testing.T) {
 	}
 
 	d := tool.NewDispatcher(r)
-
-	cfg := agent.Config{MaxSteps: 10, Dispatcher: d}
+	store := conversation.New()
+	cfg := agent.Config{MaxSteps: 10, Dispatcher: d, Store: store}
 
 	a := agent.New(cfg)
 
