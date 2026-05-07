@@ -33,6 +33,7 @@ func (l *Loop) Run(ctx context.Context, calls []ToolCall) <-chan event.Event {
 	out := make(chan event.Event)
 
 	go func() {
+		defer close(out)
 		step := 0
 		for _, call := range calls {
 			if ctx.Err() != nil {
@@ -64,8 +65,6 @@ func (l *Loop) Run(ctx context.Context, calls []ToolCall) <-chan event.Event {
 		}
 
 		out <- event.TurnCompletedEvent{}
-
-		close(out)
 	}()
 
 	return out
