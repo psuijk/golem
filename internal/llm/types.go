@@ -59,6 +59,12 @@ type MessageStop struct {
 
 func (MessageStop) isStreamEvent() {}
 
+type ErrorEvent struct {
+	Err error
+}
+
+func (ErrorEvent) isStreamEvent() {}
+
 type Usage struct {
 	InputTokens  int
 	OutputTokens int
