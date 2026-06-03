@@ -4,10 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/psuijk/golem/internal/fsops"
 	"github.com/psuijk/golem/internal/tool"
+	"github.com/psuijk/golem/internal/tools/readfile"
+	"github.com/psuijk/golem/internal/tools/writefile"
 )
 
 type fakeTool struct {
@@ -41,7 +47,7 @@ func TestDispatchHappyPath(t *testing.T) {
 		result: &tool.Result{Text: "hello", IsError: false},
 		err:    nil,
 	})
-	dispatcher := tool.NewDispatcher(registry)
+	dispatcher := tool.NewDispatcher(registry, nil)
 
 	result, err := dispatcher.Dispatch(context.Background(), "echo", nil)
 	if err != nil {
@@ -57,7 +63,7 @@ func TestDispatchHappyPath(t *testing.T) {
 
 func TestDispatchToolNotFound(t *testing.T) {
 	registry := tool.NewRegistry()
-	dispatcher := tool.NewDispatcher(registry)
+	dispatcher := tool.NewDispatcher(registry, nil)
 
 	result, err := dispatcher.Dispatch(context.Background(), "nonexistent", nil)
 	if err == nil {
@@ -75,7 +81,7 @@ func TestDispatchExecuteError(t *testing.T) {
 		result: nil,
 		err:    tool.ErrToolNotFound,
 	})
-	dispatcher := tool.NewDispatcher(registry)
+	dispatcher := tool.NewDispatcher(registry, nil)
 
 	result, err := dispatcher.Dispatch(context.Background(), "broken", nil)
 	if !errors.Is(err, tool.ErrToolNotFound) {
@@ -86,5 +92,117 @@ func TestDispatchExecuteError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "broken") {
 		t.Errorf("err = %v, want to mention tool name", err)
+	}
+}
+
+func TestDispatchPolicyDeniesOutsidePath(t *testing.T) {
+	dir := t.TempDir()
+	outsideDir := t.TempDir()
+
+	outsidePath := filepath.Join(outsideDir, "secret.txt")
+	if err := os.WriteFile(outsidePath, nil, 0644); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	registry := tool.NewRegistry()
+	registry.Register(readfile.New(1 << 20))
+
+	policy := fsops.NewPolicy([]fsops.PathRule{
+		{Path: dir, Access: fsops.ReadWrite},
+	})
+	dispatcher := tool.NewDispatcher(registry, policy)
+
+	input := json.RawMessage(fmt.Sprintf(`{"path":%q}`, outsidePath))
+	result, err := dispatcher.Dispatch(context.Background(), "readfile", input)
+
+	if err != nil {
+		t.Fatalf("expected IsError result, got Go error: %v", err)
+	}
+	if result == nil {
+		t.Fatal("result is nil, want non-nil")
+	}
+	if !result.IsError {
+		t.Errorf("IsError = false, want true")
+	}
+	if !strings.Contains(result.Text, "not under any allowed root") {
+		t.Errorf("Text = %q, want to contain 'not under any allowed root'", result.Text)
+	}
+}
+
+func TestDispatchPolicyDeniesWriteToReadOnly(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "file.txt")
+	if err := os.WriteFile(path, nil, 0644); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	registry := tool.NewRegistry()
+	registry.Register(writefile.New())
+
+	policy := fsops.NewPolicy([]fsops.PathRule{
+		{Path: dir, Access: fsops.ReadOnly},
+	})
+	dispatcher := tool.NewDispatcher(registry, policy)
+
+	input := json.RawMessage(fmt.Sprintf(`{"path":%q,"content":"overwrite"}`, path))
+	result, err := dispatcher.Dispatch(context.Background(), "writefile", input)
+
+	if err != nil {
+		t.Fatalf("expected IsError result, got Go error: %v", err)
+	}
+	if result == nil {
+		t.Fatal("result is nil, want non-nil")
+	}
+	if !result.IsError {
+		t.Errorf("IsError = false, want true")
+	}
+	if !strings.Contains(result.Text, "read-only") {
+		t.Errorf("Text = %q, want to contain 'read-only'", result.Text)
+	}
+}
+
+func TestDispatchPolicyAllowsReadOnReadOnly(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "file.txt")
+	if err := os.WriteFile(path, []byte("hello"), 0644); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	registry := tool.NewRegistry()
+	registry.Register(readfile.New(1 << 20))
+
+	policy := fsops.NewPolicy([]fsops.PathRule{
+		{Path: dir, Access: fsops.ReadOnly},
+	})
+	dispatcher := tool.NewDispatcher(registry, policy)
+
+	input := json.RawMessage(fmt.Sprintf(`{"path":%q}`, path))
+	result, err := dispatcher.Dispatch(context.Background(), "readfile", input)
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		t.Errorf("IsError = true, want false; text = %q", result.Text)
+	}
+	if result.Text != "hello" {
+		t.Errorf("Text = %q, want %q", result.Text, "hello")
+	}
+}
+
+func TestDispatchNoPolicySkipsValidation(t *testing.T) {
+	registry := tool.NewRegistry()
+	registry.Register(fakeTool{
+		name:   "echo",
+		result: &tool.Result{Text: "hello", IsError: false},
+	})
+	dispatcher := tool.NewDispatcher(registry, nil)
+
+	result, err := dispatcher.Dispatch(context.Background(), "echo", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Text != "hello" {
+		t.Errorf("Text = %q, want %q", result.Text, "hello")
 	}
 }

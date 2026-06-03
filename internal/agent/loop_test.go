@@ -35,7 +35,7 @@ func TestLoopHappyPath(t *testing.T) {
 		t.Fatalf("failed to register readfile tool: %v", err)
 	}
 
-	d := tool.NewDispatcher(r)
+	d := tool.NewDispatcher(r, nil)
 	store := conversation.New()
 	cfg := agent.Config{MaxSteps: 10, Dispatcher: d, Store: store}
 
@@ -103,7 +103,7 @@ func TestLoopMaxSteps(t *testing.T) {
 		t.Fatalf("register: %v", err)
 	}
 
-	d := tool.NewDispatcher(r)
+	d := tool.NewDispatcher(r, nil)
 	a := agent.New(agent.Config{MaxSteps: 2, Dispatcher: d})
 
 	events := a.Run(ctx, []agent.ToolCall{
@@ -137,7 +137,7 @@ func TestLoopContextCancellation(t *testing.T) {
 		t.Fatalf("register: %v", err)
 	}
 
-	d := tool.NewDispatcher(r)
+	d := tool.NewDispatcher(r, nil)
 	a := agent.New(agent.Config{MaxSteps: 10, Dispatcher: d})
 
 	events := a.Run(ctx, []agent.ToolCall{
@@ -162,7 +162,7 @@ func TestLoopEmptyCalls(t *testing.T) {
 	ctx := context.Background()
 
 	r := tool.NewRegistry()
-	d := tool.NewDispatcher(r)
+	d := tool.NewDispatcher(r, nil)
 	a := agent.New(agent.Config{MaxSteps: 10, Dispatcher: d})
 
 	events := a.Run(ctx, []agent.ToolCall{})

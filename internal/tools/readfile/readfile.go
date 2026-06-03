@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/psuijk/golem/internal/fsops"
 	"github.com/psuijk/golem/internal/tool"
 )
 
@@ -83,4 +84,15 @@ func (t *Tool) Execute(ctx context.Context, input json.RawMessage) (*tool.Result
 	return &tool.Result{Text: string(data), IsError: false}, nil
 }
 
+func (t *Tool) PathFromInput(input json.RawMessage) (string, fsops.Operation, error) {
+	var args readFileArgs
+
+	if err := json.Unmarshal(input, &args); err != nil {
+		return "", fsops.OpRead, fmt.Errorf("parse readfile input: %w", err)
+	}
+
+	return args.Path, fsops.OpRead, nil
+}
+
 var _ tool.Tool = (*Tool)(nil)
+var _ fsops.PathValidator = (*Tool)(nil)

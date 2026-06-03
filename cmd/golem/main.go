@@ -26,7 +26,7 @@ func main() {
 		log.Fatalf("register readfile tool: %v", err)
 	}
 
-	d := tool.NewDispatcher(r)
+	d := tool.NewDispatcher(r, nil)
 
 	result, err := d.Dispatch(ctx, "bash", json.RawMessage(`{"command": "echo hello world"}`))
 	if err != nil {
