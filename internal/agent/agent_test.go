@@ -47,7 +47,7 @@ func (echoTool) Execute(_ context.Context, input json.RawMessage) (*tool.Result,
 	return &tool.Result{Text: string(input)}, nil
 }
 
-func newDispatcher(tools ...tool.Tool) *tool.Dispatcher {
+func newDispatcher(tools ...tool.Interface) *tool.Dispatcher {
 	r := tool.NewRegistry()
 	for _, t := range tools {
 		_ = r.Register(t)
@@ -145,8 +145,8 @@ func TestRunWithToolCalls(t *testing.T) {
 	if s, ok := events[2].(event.ToolCallStartedEvent); !ok || s.Name != "echo" {
 		t.Errorf("events[2] = %+v, want ToolCallStartedEvent{echo}", events[2])
 	}
-	if c, ok := events[3].(event.ToolCallCompletedEvent); !ok || c.Result.Text != `"ping"` {
-		t.Errorf("events[3] = %+v, want ToolCallCompletedEvent with result \"ping\"", events[3])
+	if c, ok := events[3].(event.ToolCallCompletedEvent); !ok || c.Text != `"ping"` {
+		t.Errorf("events[3] = %+v, want ToolCallCompletedEvent with text \"ping\"", events[3])
 	}
 	if _, ok := events[4].(event.TextDeltaEvent); !ok {
 		t.Errorf("events[4] = %T, want TextDeltaEvent", events[4])

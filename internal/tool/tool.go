@@ -10,7 +10,7 @@ type Result struct {
 	IsError bool
 }
 
-type Tool interface {
+type Interface interface {
 	Name() string
 	Description() string
 	Schema() json.RawMessage

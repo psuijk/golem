@@ -24,7 +24,7 @@ type ToolUseContent struct {
 func (ToolUseContent) isContent() {}
 
 type ToolResultContent struct {
-	ToolUseID string
+	ToolCallID string
 	Content   string
 	IsError   bool
 }

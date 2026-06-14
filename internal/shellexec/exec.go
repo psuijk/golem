@@ -2,6 +2,7 @@
 package shellexec
 
 import (
+	"bytes"
 	"context"
 	"os/exec"
 )
@@ -19,24 +20,25 @@ type Result struct {
 func Run(ctx context.Context, name string, args ...string) (*Result, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
 
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
 	output, err := cmd.Output()
 
-	var stderr []byte
 	if err != nil {
-		exitErr, ok := err.(*exec.ExitError)
-		if !ok {
+		// Context cancellation — command was killed, no useful result.
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
+		// If it's not an ExitError, the command couldn't run at all
+		// (e.g. binary not found).
+		if _, ok := err.(*exec.ExitError); !ok {
 			return nil, err
 		}
-		stderr = exitErr.Stderr
-	}
-
-	if ctxErr := ctx.Err(); ctxErr != nil {
-		return nil, ctxErr
 	}
 
 	return &Result{
 		Stdout:   string(output),
-		Stderr:   string(stderr),
+		Stderr:   stderr.String(),
 		ExitCode: cmd.ProcessState.ExitCode(),
 	}, nil
 }

@@ -116,7 +116,7 @@ func (a *Agent) Run(ctx context.Context, userMessage string) <-chan event.Event 
 					conversation.ToolResultMessage{ToolCallID: call.ID, Content: content, IsError: isError},
 				)
 
-				out <- event.ToolCallCompletedEvent{Name: call.Name, Result: result, Err: err}
+				out <- event.ToolCallCompletedEvent{Name: call.Name, Text: content, IsError: isError}
 				step++
 			}
 
@@ -143,7 +143,7 @@ func buildMessages(msgs []conversation.Message) []llm.Message {
 			}
 			llmMsgs = append(llmMsgs, llm.Message{Role: llm.RoleAssistant, Content: content})
 		case conversation.ToolResultMessage:
-			llmMsgs = append(llmMsgs, llm.Message{Role: llm.RoleUser, Content: []llm.Content{llm.ToolResultContent{ToolUseID: m.ToolCallID, Content: m.Content, IsError: m.IsError}}})
+			llmMsgs = append(llmMsgs, llm.Message{Role: llm.RoleUser, Content: []llm.Content{llm.ToolResultContent{ToolCallID: m.ToolCallID, Content: m.Content, IsError: m.IsError}}})
 		}
 	}
 

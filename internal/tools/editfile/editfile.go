@@ -86,7 +86,10 @@ func (t *Tool) Execute(ctx context.Context, input json.RawMessage) (*tool.Result
 	}
 
 	if info.Size() > t.maxSize {
-		return &tool.Result{Text: fmt.Sprintf("file %s is %d bytes, exceeds max %d", args.Path, info.Size(), t.maxSize), IsError: true}, nil
+		return &tool.Result{
+			Text:    fmt.Sprintf("file %s is %d bytes, exceeds max %d", args.Path, info.Size(), t.maxSize),
+			IsError: true,
+		}, nil
 	}
 
 	data, err := os.ReadFile(args.Path)
@@ -103,12 +106,15 @@ func (t *Tool) Execute(ctx context.Context, input json.RawMessage) (*tool.Result
 		return &tool.Result{Text: fmt.Sprintf("old_string not found in %s", args.Path), IsError: true}, nil
 	}
 	if count > 1 {
-		return &tool.Result{Text: fmt.Sprintf("found %d occurrences of old_string in %s, must be unique", count, args.Path), IsError: true}, nil
+		return &tool.Result{
+			Text:    fmt.Sprintf("found %d occurrences of old_string in %s, must be unique", count, args.Path),
+			IsError: true,
+		}, nil
 	}
 
 	newContent := strings.Replace(string(data), args.OldString, args.NewString, 1)
 
-	err = os.WriteFile(args.Path, []byte(newContent), 0644)
+	err = os.WriteFile(args.Path, []byte(newContent), info.Mode())
 
 	if err != nil {
 		return &tool.Result{Text: fmt.Sprintf("write %s: %s", args.Path, err), IsError: true}, nil
@@ -127,6 +133,6 @@ func (t *Tool) PathFromInput(input json.RawMessage) (string, fsops.Operation, er
 	return args.Path, fsops.OpWrite, nil
 }
 
-// Compile-time assertion that *Tool satisfies the tool.Tool interface.
-var _ tool.Tool = (*Tool)(nil)
+// Compile-time assertion that *Tool satisfies the tool.Interface interface.
+var _ tool.Interface = (*Tool)(nil)
 var _ fsops.PathValidator = (*Tool)(nil)

@@ -99,7 +99,7 @@ func buildRequest(req llm.RequestParams) anthropicRequest {
 			case llm.ToolUseContent:
 				parts = append(parts, anthropicContent{Type: "tool_use", ID: content.ID, Name: content.Name, Input: content.Input})
 			case llm.ToolResultContent:
-				parts = append(parts, anthropicContent{Type: "tool_result", ToolUseID: content.ToolUseID, Content: content.Content, IsError: content.IsError})
+				parts = append(parts, anthropicContent{Type: "tool_result", ToolUseID: content.ToolCallID, Content: content.Content, IsError: content.IsError})
 			}
 		}
 		msgs = append(msgs, anthropicMessage{Role: string(msg.Role), Content: parts})

@@ -82,5 +82,5 @@ func (t *Tool) PathFromInput(input json.RawMessage) (string, fsops.Operation, er
 	return args.Path, fsops.OpWrite, nil
 }
 
-var _ tool.Tool = (*Tool)(nil)
+var _ tool.Interface = (*Tool)(nil)
 var _ fsops.PathValidator = (*Tool)(nil)

@@ -38,7 +38,7 @@ func (f fakeTool) Execute(ctx context.Context, input json.RawMessage) (*tool.Res
 	return f.result, f.err
 }
 
-var _ tool.Tool = fakeTool{}
+var _ tool.Interface = fakeTool{}
 
 func TestDispatchHappyPath(t *testing.T) {
 	registry := tool.NewRegistry()

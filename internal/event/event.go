@@ -1,10 +1,6 @@
 package event
 
-import (
-	"encoding/json"
-
-	"github.com/psuijk/golem/internal/tool"
-)
+import "encoding/json"
 
 // Event is the marker interface for all event types emitted by the agent
 // loop into its event channel. The unexported isEvent method restricts
@@ -30,14 +26,14 @@ type ToolCallStartedEvent struct {
 
 func (ToolCallStartedEvent) isEvent() {}
 
-// ToolCallCompletedEvent is emitted after a tool call returns. Result
-// holds the tool's output (nil if the tool returned a Go error). Err is
-// non-nil only for caller bugs (e.g. malformed input), not for expected
-// operational failures (which use Result.IsError).
+// ToolCallCompletedEvent is emitted after a tool call returns. Text
+// holds the tool's output. IsError is true when the tool ran but the
+// operation failed (e.g. file not found) or when the dispatch itself
+// failed (e.g. unknown tool).
 type ToolCallCompletedEvent struct {
-	Name   string
-	Result *tool.Result
-	Err    error
+	Name    string
+	Text    string
+	IsError bool
 }
 
 func (ToolCallCompletedEvent) isEvent() {}

@@ -93,4 +93,4 @@ func (t *Tool) Execute(ctx context.Context, input json.RawMessage) (*tool.Result
 	return &tool.Result{Text: text, IsError: isErr}, nil
 }
 
-var _ tool.Tool = (*Tool)(nil)
+var _ tool.Interface = (*Tool)(nil)
