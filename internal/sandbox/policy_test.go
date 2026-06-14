@@ -1,4 +1,4 @@
-package fsops_test
+package sandbox_test
 
 import (
 	"os"
@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/psuijk/golem/internal/fsops"
+	"github.com/psuijk/golem/internal/sandbox"
 )
 
 func TestReadUnderAllowedRoot(t *testing.T) {
@@ -16,11 +16,11 @@ func TestReadUnderAllowedRoot(t *testing.T) {
 		t.Fatalf("setup: %v", err)
 	}
 
-	policy := fsops.NewPolicy([]fsops.PathRule{
-		{Path: dir, Access: fsops.ReadWrite},
+	policy := sandbox.NewPolicy([]sandbox.PathRule{
+		{Path: dir, Access: sandbox.ReadWrite},
 	})
 
-	if err := policy.ValidatePath(path, fsops.OpRead); err != nil {
+	if err := policy.ValidatePath(path, sandbox.OpRead); err != nil {
 		t.Errorf("expected read to be allowed, got: %v", err)
 	}
 }
@@ -32,11 +32,11 @@ func TestWriteUnderReadWriteRoot(t *testing.T) {
 		t.Fatalf("setup: %v", err)
 	}
 
-	policy := fsops.NewPolicy([]fsops.PathRule{
-		{Path: dir, Access: fsops.ReadWrite},
+	policy := sandbox.NewPolicy([]sandbox.PathRule{
+		{Path: dir, Access: sandbox.ReadWrite},
 	})
 
-	if err := policy.ValidatePath(path, fsops.OpWrite); err != nil {
+	if err := policy.ValidatePath(path, sandbox.OpWrite); err != nil {
 		t.Errorf("expected write to be allowed, got: %v", err)
 	}
 }
@@ -48,11 +48,11 @@ func TestWriteUnderReadOnlyRoot(t *testing.T) {
 		t.Fatalf("setup: %v", err)
 	}
 
-	policy := fsops.NewPolicy([]fsops.PathRule{
-		{Path: dir, Access: fsops.ReadOnly},
+	policy := sandbox.NewPolicy([]sandbox.PathRule{
+		{Path: dir, Access: sandbox.ReadOnly},
 	})
 
-	err := policy.ValidatePath(path, fsops.OpWrite)
+	err := policy.ValidatePath(path, sandbox.OpWrite)
 	if err == nil {
 		t.Fatal("expected write to be denied, got nil")
 	}
@@ -69,11 +69,11 @@ func TestPathOutsideAllRoots(t *testing.T) {
 		t.Fatalf("setup: %v", err)
 	}
 
-	policy := fsops.NewPolicy([]fsops.PathRule{
-		{Path: dir, Access: fsops.ReadWrite},
+	policy := sandbox.NewPolicy([]sandbox.PathRule{
+		{Path: dir, Access: sandbox.ReadWrite},
 	})
 
-	err := policy.ValidatePath(path, fsops.OpRead)
+	err := policy.ValidatePath(path, sandbox.OpRead)
 	if err == nil {
 		t.Fatal("expected path outside root to be denied, got nil")
 	}
@@ -93,18 +93,18 @@ func TestMostSpecificRuleWins(t *testing.T) {
 		t.Fatalf("setup: %v", err)
 	}
 
-	policy := fsops.NewPolicy([]fsops.PathRule{
-		{Path: dir, Access: fsops.ReadWrite},
-		{Path: subdir, Access: fsops.ReadOnly},
+	policy := sandbox.NewPolicy([]sandbox.PathRule{
+		{Path: dir, Access: sandbox.ReadWrite},
+		{Path: subdir, Access: sandbox.ReadOnly},
 	})
 
 	// Read should be allowed (read-only still permits reads)
-	if err := policy.ValidatePath(path, fsops.OpRead); err != nil {
+	if err := policy.ValidatePath(path, sandbox.OpRead); err != nil {
 		t.Errorf("expected read to be allowed, got: %v", err)
 	}
 
 	// Write should be denied (subdirectory override is read-only)
-	err := policy.ValidatePath(path, fsops.OpWrite)
+	err := policy.ValidatePath(path, sandbox.OpWrite)
 	if err == nil {
 		t.Fatal("expected write to subdirectory to be denied, got nil")
 	}
@@ -128,11 +128,11 @@ func TestSimilarDirectoryName(t *testing.T) {
 		t.Fatalf("setup: %v", err)
 	}
 
-	policy := fsops.NewPolicy([]fsops.PathRule{
-		{Path: project, Access: fsops.ReadWrite},
+	policy := sandbox.NewPolicy([]sandbox.PathRule{
+		{Path: project, Access: sandbox.ReadWrite},
 	})
 
-	err := policy.ValidatePath(path, fsops.OpRead)
+	err := policy.ValidatePath(path, sandbox.OpRead)
 	if err == nil {
 		t.Fatal("expected projectX to NOT match project rule, got nil")
 	}
@@ -153,11 +153,11 @@ func TestSymlinkEscape(t *testing.T) {
 		t.Fatalf("setup symlink: %v", err)
 	}
 
-	policy := fsops.NewPolicy([]fsops.PathRule{
-		{Path: allowed, Access: fsops.ReadWrite},
+	policy := sandbox.NewPolicy([]sandbox.PathRule{
+		{Path: allowed, Access: sandbox.ReadWrite},
 	})
 
-	err := policy.ValidatePath(link, fsops.OpRead)
+	err := policy.ValidatePath(link, sandbox.OpRead)
 	if err == nil {
 		t.Fatal("expected symlink escape to be denied, got nil")
 	}

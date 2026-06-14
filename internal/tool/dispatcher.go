@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/psuijk/golem/internal/fsops"
+	"github.com/psuijk/golem/internal/sandbox"
 )
 
 // ErrToolNotFound is returned when Dispatch is called with a name that
@@ -16,11 +16,11 @@ var ErrToolNotFound = errors.New("tool not found")
 // Dispatcher routes tool calls to registered tools and returns their results.
 type Dispatcher struct {
 	registry *Registry
-	policy   *fsops.Policy
+	policy   *sandbox.Policy
 }
 
 // NewDispatcher returns a Dispatcher that routes tool calls through the given registry.
-func NewDispatcher(r *Registry, p *fsops.Policy) *Dispatcher {
+func NewDispatcher(r *Registry, p *sandbox.Policy) *Dispatcher {
 	return &Dispatcher{
 		registry: r,
 		policy:   p,
@@ -35,7 +35,7 @@ func (d *Dispatcher) Dispatch(ctx context.Context, name string, input json.RawMe
 		return nil, fmt.Errorf("dispatching %q: %w", name, ErrToolNotFound)
 	}
 	if d.policy != nil {
-		pv, ok := t.(fsops.PathValidator)
+		pv, ok := t.(sandbox.PathValidator)
 		if ok {
 			path, op, err := pv.PathFromInput(input)
 			if err != nil {

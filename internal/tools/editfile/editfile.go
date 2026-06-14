@@ -7,7 +7,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/psuijk/golem/internal/fsops"
+	"github.com/psuijk/golem/internal/sandbox"
 	"github.com/psuijk/golem/internal/tool"
 )
 
@@ -123,16 +123,16 @@ func (t *Tool) Execute(ctx context.Context, input json.RawMessage) (*tool.Result
 	return &tool.Result{Text: fmt.Sprintf("wrote %d bytes to %s", len(newContent), args.Path), IsError: false}, nil
 }
 
-func (t *Tool) PathFromInput(input json.RawMessage) (string, fsops.Operation, error) {
+func (t *Tool) PathFromInput(input json.RawMessage) (string, sandbox.Operation, error) {
 	var args editFileArgs
 
 	if err := json.Unmarshal(input, &args); err != nil {
-		return "", fsops.OpWrite, fmt.Errorf("parse editfile input: %w", err)
+		return "", sandbox.OpWrite, fmt.Errorf("parse editfile input: %w", err)
 	}
 
-	return args.Path, fsops.OpWrite, nil
+	return args.Path, sandbox.OpWrite, nil
 }
 
 // Compile-time assertion that *Tool satisfies the tool.Interface interface.
 var _ tool.Interface = (*Tool)(nil)
-var _ fsops.PathValidator = (*Tool)(nil)
+var _ sandbox.PathValidator = (*Tool)(nil)

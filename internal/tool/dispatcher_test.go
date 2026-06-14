@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/psuijk/golem/internal/fsops"
+	"github.com/psuijk/golem/internal/sandbox"
 	"github.com/psuijk/golem/internal/tool"
 	"github.com/psuijk/golem/internal/tools/readfile"
 	"github.com/psuijk/golem/internal/tools/writefile"
@@ -107,8 +107,8 @@ func TestDispatchPolicyDeniesOutsidePath(t *testing.T) {
 	registry := tool.NewRegistry()
 	registry.Register(readfile.New(1 << 20))
 
-	policy := fsops.NewPolicy([]fsops.PathRule{
-		{Path: dir, Access: fsops.ReadWrite},
+	policy := sandbox.NewPolicy([]sandbox.PathRule{
+		{Path: dir, Access: sandbox.ReadWrite},
 	})
 	dispatcher := tool.NewDispatcher(registry, policy)
 
@@ -139,8 +139,8 @@ func TestDispatchPolicyDeniesWriteToReadOnly(t *testing.T) {
 	registry := tool.NewRegistry()
 	registry.Register(writefile.New())
 
-	policy := fsops.NewPolicy([]fsops.PathRule{
-		{Path: dir, Access: fsops.ReadOnly},
+	policy := sandbox.NewPolicy([]sandbox.PathRule{
+		{Path: dir, Access: sandbox.ReadOnly},
 	})
 	dispatcher := tool.NewDispatcher(registry, policy)
 
@@ -171,8 +171,8 @@ func TestDispatchPolicyAllowsReadOnReadOnly(t *testing.T) {
 	registry := tool.NewRegistry()
 	registry.Register(readfile.New(1 << 20))
 
-	policy := fsops.NewPolicy([]fsops.PathRule{
-		{Path: dir, Access: fsops.ReadOnly},
+	policy := sandbox.NewPolicy([]sandbox.PathRule{
+		{Path: dir, Access: sandbox.ReadOnly},
 	})
 	dispatcher := tool.NewDispatcher(registry, policy)
 
