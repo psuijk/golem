@@ -41,13 +41,12 @@ func (f fakeTool) Execute(ctx context.Context, input json.RawMessage) (*tool.Res
 var _ tool.Interface = fakeTool{}
 
 func TestDispatchHappyPath(t *testing.T) {
-	registry := tool.NewRegistry()
-	registry.Register(fakeTool{
-		name:   "echo",
-		result: &tool.Result{Text: "hello", IsError: false},
-		err:    nil,
-	})
-	dispatcher := tool.NewDispatcher(registry, nil)
+	dispatcher, err := tool.NewDispatcher([]tool.Interface{
+		fakeTool{name: "echo", result: &tool.Result{Text: "hello", IsError: false}},
+	}, nil)
+	if err != nil {
+		t.Fatalf("NewDispatcher: %v", err)
+	}
 
 	result, err := dispatcher.Dispatch(context.Background(), "echo", nil)
 	if err != nil {
@@ -62,8 +61,10 @@ func TestDispatchHappyPath(t *testing.T) {
 }
 
 func TestDispatchToolNotFound(t *testing.T) {
-	registry := tool.NewRegistry()
-	dispatcher := tool.NewDispatcher(registry, nil)
+	dispatcher, err := tool.NewDispatcher([]tool.Interface{}, nil)
+	if err != nil {
+		t.Fatalf("NewDispatcher: %v", err)
+	}
 
 	result, err := dispatcher.Dispatch(context.Background(), "nonexistent", nil)
 	if err == nil {
@@ -75,13 +76,12 @@ func TestDispatchToolNotFound(t *testing.T) {
 }
 
 func TestDispatchExecuteError(t *testing.T) {
-	registry := tool.NewRegistry()
-	registry.Register(fakeTool{
-		name:   "broken",
-		result: nil,
-		err:    tool.ErrToolNotFound,
-	})
-	dispatcher := tool.NewDispatcher(registry, nil)
+	dispatcher, err := tool.NewDispatcher([]tool.Interface{
+		fakeTool{name: "broken", result: nil, err: tool.ErrToolNotFound},
+	}, nil)
+	if err != nil {
+		t.Fatalf("NewDispatcher: %v", err)
+	}
 
 	result, err := dispatcher.Dispatch(context.Background(), "broken", nil)
 	if !errors.Is(err, tool.ErrToolNotFound) {
@@ -104,13 +104,13 @@ func TestDispatchPolicyDeniesOutsidePath(t *testing.T) {
 		t.Fatalf("setup: %v", err)
 	}
 
-	registry := tool.NewRegistry()
-	registry.Register(readfile.New(1 << 20))
-
 	policy := sandbox.NewPolicy([]sandbox.PathRule{
 		{Path: dir, Access: sandbox.ReadWrite},
 	})
-	dispatcher := tool.NewDispatcher(registry, policy)
+	dispatcher, err := tool.NewDispatcher([]tool.Interface{readfile.New(1 << 20)}, policy)
+	if err != nil {
+		t.Fatalf("NewDispatcher: %v", err)
+	}
 
 	input := json.RawMessage(fmt.Sprintf(`{"path":%q}`, outsidePath))
 	result, err := dispatcher.Dispatch(context.Background(), "readfile", input)
@@ -136,13 +136,13 @@ func TestDispatchPolicyDeniesWriteToReadOnly(t *testing.T) {
 		t.Fatalf("setup: %v", err)
 	}
 
-	registry := tool.NewRegistry()
-	registry.Register(writefile.New())
-
 	policy := sandbox.NewPolicy([]sandbox.PathRule{
 		{Path: dir, Access: sandbox.ReadOnly},
 	})
-	dispatcher := tool.NewDispatcher(registry, policy)
+	dispatcher, err := tool.NewDispatcher([]tool.Interface{writefile.New()}, policy)
+	if err != nil {
+		t.Fatalf("NewDispatcher: %v", err)
+	}
 
 	input := json.RawMessage(fmt.Sprintf(`{"path":%q,"content":"overwrite"}`, path))
 	result, err := dispatcher.Dispatch(context.Background(), "writefile", input)
@@ -168,13 +168,13 @@ func TestDispatchPolicyAllowsReadOnReadOnly(t *testing.T) {
 		t.Fatalf("setup: %v", err)
 	}
 
-	registry := tool.NewRegistry()
-	registry.Register(readfile.New(1 << 20))
-
 	policy := sandbox.NewPolicy([]sandbox.PathRule{
 		{Path: dir, Access: sandbox.ReadOnly},
 	})
-	dispatcher := tool.NewDispatcher(registry, policy)
+	dispatcher, err := tool.NewDispatcher([]tool.Interface{readfile.New(1 << 20)}, policy)
+	if err != nil {
+		t.Fatalf("NewDispatcher: %v", err)
+	}
 
 	input := json.RawMessage(fmt.Sprintf(`{"path":%q}`, path))
 	result, err := dispatcher.Dispatch(context.Background(), "readfile", input)
@@ -191,12 +191,12 @@ func TestDispatchPolicyAllowsReadOnReadOnly(t *testing.T) {
 }
 
 func TestDispatchNoPolicySkipsValidation(t *testing.T) {
-	registry := tool.NewRegistry()
-	registry.Register(fakeTool{
-		name:   "echo",
-		result: &tool.Result{Text: "hello", IsError: false},
-	})
-	dispatcher := tool.NewDispatcher(registry, nil)
+	dispatcher, err := tool.NewDispatcher([]tool.Interface{
+		fakeTool{name: "echo", result: &tool.Result{Text: "hello", IsError: false}},
+	}, nil)
+	if err != nil {
+		t.Fatalf("NewDispatcher: %v", err)
+	}
 
 	result, err := dispatcher.Dispatch(context.Background(), "echo", nil)
 	if err != nil {

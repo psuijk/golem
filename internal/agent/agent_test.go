@@ -48,11 +48,33 @@ func (echoTool) Execute(_ context.Context, input json.RawMessage) (*tool.Result,
 }
 
 func newDispatcher(tools ...tool.Interface) *tool.Dispatcher {
-	r := tool.NewRegistry()
-	for _, t := range tools {
-		_ = r.Register(t)
+	d, err := tool.NewDispatcher(tools, nil)
+	if err != nil {
+		panic(err)
 	}
-	return tool.NewDispatcher(r, nil)
+	return d
+}
+
+// mockResolver returns a fixed provider for any model ID.
+type mockResolver struct {
+	provider llm.Provider
+}
+
+func (m *mockResolver) Resolve(modelID string) (llm.Provider, error) {
+	return m.provider, nil
+}
+
+func newAgent(t *testing.T, provider llm.Provider, dispatcher *tool.Dispatcher, store *conversation.Store) *agent.Agent {
+	t.Helper()
+	a, err := agent.New(agent.Config{
+		Resolver:   &mockResolver{provider: provider},
+		Dispatcher: dispatcher,
+		Store:      store,
+	})
+	if err != nil {
+		t.Fatalf("agent.New: %v", err)
+	}
+	return a
 }
 
 func collect(ch <-chan event.Event) []event.Event {
@@ -74,15 +96,8 @@ func TestRunTextOnly(t *testing.T) {
 		},
 	}
 
-	a := agent.New(agent.Config{
-		MaxTurns:   10,
-		MaxSteps:   10,
-		Provider:   provider,
-		Dispatcher: newDispatcher(),
-		Store:      conversation.New(),
-	})
-
-	events := collect(a.Run(context.Background(), "hi"))
+	a := newAgent(t, provider, newDispatcher(), conversation.New())
+	events := collect(a.Run(context.Background(), "test-model", "hi"))
 
 	// Expect: TextDelta, TextDelta, UsageEvent, TurnCompletedEvent
 	if len(events) != 4 {
@@ -120,15 +135,8 @@ func TestRunWithToolCalls(t *testing.T) {
 		},
 	}
 
-	a := agent.New(agent.Config{
-		MaxTurns:   10,
-		MaxSteps:   10,
-		Provider:   provider,
-		Dispatcher: newDispatcher(echoTool{}),
-		Store:      conversation.New(),
-	})
-
-	events := collect(a.Run(context.Background(), "do it"))
+	a := newAgent(t, provider, newDispatcher(echoTool{}), conversation.New())
+	events := collect(a.Run(context.Background(), "test-model", "do it"))
 
 	// Expect: TextDelta("let me check"), UsageEvent, ToolCallStarted, ToolCallCompleted,
 	//         TextDelta("done"), UsageEvent, TurnCompleted
@@ -180,15 +188,17 @@ func TestRunMaxTurns(t *testing.T) {
 		},
 	}
 
-	a := agent.New(agent.Config{
+	a, err := agent.New(agent.Config{
 		MaxTurns:   2,
-		MaxSteps:   10,
-		Provider:   provider,
+		Resolver:   &mockResolver{provider: provider},
 		Dispatcher: newDispatcher(echoTool{}),
 		Store:      conversation.New(),
 	})
+	if err != nil {
+		t.Fatalf("agent.New: %v", err)
+	}
 
-	events := collect(a.Run(context.Background(), "go"))
+	events := collect(a.Run(context.Background(), "test-model", "go"))
 
 	// Should have called the provider exactly 2 times
 	if provider.callCount != 2 {
@@ -215,15 +225,17 @@ func TestRunMaxSteps(t *testing.T) {
 		},
 	}
 
-	a := agent.New(agent.Config{
-		MaxTurns:   10,
+	a, err := agent.New(agent.Config{
 		MaxSteps:   2,
-		Provider:   provider,
+		Resolver:   &mockResolver{provider: provider},
 		Dispatcher: newDispatcher(echoTool{}),
 		Store:      conversation.New(),
 	})
+	if err != nil {
+		t.Fatalf("agent.New: %v", err)
+	}
 
-	events := collect(a.Run(context.Background(), "go"))
+	events := collect(a.Run(context.Background(), "test-model", "go"))
 
 	// Should have 2 tool started + 2 tool completed + usage + turn completed = 6
 	var toolCompleted int
@@ -252,15 +264,8 @@ func TestRunContextCancellation(t *testing.T) {
 		},
 	}
 
-	a := agent.New(agent.Config{
-		MaxTurns:   10,
-		MaxSteps:   10,
-		Provider:   provider,
-		Dispatcher: newDispatcher(),
-		Store:      conversation.New(),
-	})
-
-	events := collect(a.Run(ctx, "hi"))
+	a := newAgent(t, provider, newDispatcher(), conversation.New())
+	events := collect(a.Run(ctx, "test-model", "hi"))
 
 	// Only TurnCompletedEvent — provider should not be called
 	if len(events) != 1 {
@@ -277,15 +282,8 @@ func TestRunContextCancellation(t *testing.T) {
 func TestRunProviderError(t *testing.T) {
 	provider := &mockProvider{} // no responses → returns error
 
-	a := agent.New(agent.Config{
-		MaxTurns:   10,
-		MaxSteps:   10,
-		Provider:   provider,
-		Dispatcher: newDispatcher(),
-		Store:      conversation.New(),
-	})
-
-	events := collect(a.Run(context.Background(), "hi"))
+	a := newAgent(t, provider, newDispatcher(), conversation.New())
+	events := collect(a.Run(context.Background(), "test-model", "hi"))
 
 	// Expect: ErrorEvent, TurnCompletedEvent
 	if len(events) != 2 {
@@ -309,15 +307,8 @@ func TestRunStreamError(t *testing.T) {
 		},
 	}
 
-	a := agent.New(agent.Config{
-		MaxTurns:   10,
-		MaxSteps:   10,
-		Provider:   provider,
-		Dispatcher: newDispatcher(),
-		Store:      conversation.New(),
-	})
-
-	events := collect(a.Run(context.Background(), "hi"))
+	a := newAgent(t, provider, newDispatcher(), conversation.New())
+	events := collect(a.Run(context.Background(), "test-model", "hi"))
 
 	// Expect: TextDelta, ErrorEvent, TurnCompletedEvent
 	if len(events) != 3 {
@@ -349,16 +340,10 @@ func TestRunStoreAccumulates(t *testing.T) {
 	}
 
 	store := conversation.New()
-	a := agent.New(agent.Config{
-		MaxTurns:   10,
-		MaxSteps:   10,
-		Provider:   provider,
-		Dispatcher: newDispatcher(echoTool{}),
-		Store:      store,
-	})
+	a := newAgent(t, provider, newDispatcher(echoTool{}), store)
 
 	// Drain events
-	collect(a.Run(context.Background(), "go"))
+	collect(a.Run(context.Background(), "test-model", "go"))
 
 	msgs := store.Messages()
 	// UserMessage, AssistantMessage(tool call), ToolResultMessage, AssistantMessage(text)

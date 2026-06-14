@@ -1,46 +1,71 @@
 package main
 
 import (
+	"bufio"
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
+	"os"
 	"time"
 
+	"github.com/psuijk/golem/internal/agent"
+	"github.com/psuijk/golem/internal/conversation"
+	"github.com/psuijk/golem/internal/event"
 	"github.com/psuijk/golem/internal/tool"
 	"github.com/psuijk/golem/internal/tools/bash"
 	"github.com/psuijk/golem/internal/tools/readfile"
 )
 
 func main() {
-
 	ctx := context.Background()
 
-	r := tool.NewRegistry()
-
-	if err := r.Register(bash.New(30 * time.Second)); err != nil {
-		log.Fatalf("register bash tool: %v", err)
+	tools := []tool.Interface{
+		bash.New(30 * time.Second),
+		readfile.New(1 << 20),
 	}
 
-	if err := r.Register(readfile.New(1 << 20)); err != nil {
-		log.Fatalf("register readfile tool: %v", err)
-	}
-
-	d := tool.NewDispatcher(r, nil)
-
-	result, err := d.Dispatch(ctx, "bash", json.RawMessage(`{"command": "echo hello world"}`))
+	d, err := tool.NewDispatcher(tools, nil)
 	if err != nil {
-		log.Fatalf("dispatch: %v", err)
+		log.Fatalf("create dispatcher: %v", err)
 	}
 
-	fmt.Printf("text:    %s\n", result.Text)
-	fmt.Printf("isError: %v\n", result.IsError)
+	r := agent.NewResolver()
 
-	result2, err := d.Dispatch(ctx, "readfile", json.RawMessage(`{"path": "go.mod"}`))
+	a, err := agent.New(agent.Config{Resolver: r, Dispatcher: d, Store: conversation.New()})
 	if err != nil {
-		log.Fatalf("dispatch: %v", err)
+		log.Fatalf("create agent: %v", err)
 	}
 
-	fmt.Printf("text:    %s\n", result2.Text)
-	fmt.Printf("isError: %v\n", result2.IsError)
+	var userInput string
+
+	fmt.Print("How can I help you today?: ")
+
+	scanner := bufio.NewScanner(os.Stdin)
+
+	for userInput != "/exit" {
+		for scanner.Scan() {
+			userInput = scanner.Text()
+		}
+		ch := a.Run(ctx, "llama3.2:latest", userInput)
+
+		for ev := range ch {
+			switch e := ev.(type) {
+			case event.TextDeltaEvent:
+				fmt.Printf("%s", e.Text)
+			case event.ToolCallStartedEvent:
+				fmt.Printf("calling %s with arguments %s", e.Name, string(e.Input))
+			case event.ToolCallCompletedEvent:
+				if e.IsError {
+					fmt.Printf("tool %s failed", e.Name)
+				} else {
+					fmt.Printf("tool %s results: %s", e.Name, e.Text)
+				}
+			case event.UsageEvent:
+				fmt.Printf("\n Usage: Input Tokens: %d, Output Tokens: %d", e.InputTokens, e.OutputTokens)
+			case event.ErrorEvent:
+				fmt.Printf("An error occured: %s", e.Err.Error())
+			}
+		}
+		println()
+	}
 }

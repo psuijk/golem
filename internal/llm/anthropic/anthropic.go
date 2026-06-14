@@ -9,11 +9,27 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/psuijk/golem/internal/llm"
 )
+
+// Supported Anthropic models with their token limits.
+var (
+	Haiku45 = llm.Model{
+		ID:              "claude-haiku-4-5-20251001",
+		Name:            "Haiku 4.5",
+		MaxInputTokens:  200000,
+		MaxOutputTokens: 64000,
+	}
+	Sonnet46 = llm.Model{ID: "claude-sonnet-4-6", Name: "Sonnet 4.6", MaxInputTokens: 1000000, MaxOutputTokens: 64000}
+	Opus48   = llm.Model{ID: "claude-opus-4-8", Name: "Opus 4.8", MaxInputTokens: 1000000, MaxOutputTokens: 128000}
+)
+
+// Models lists all supported Anthropic models.
+var Models = []llm.Model{Haiku45, Sonnet46, Opus48}
 
 type sseData struct {
 	Type         string           `json:"type"`
@@ -107,7 +123,10 @@ func buildRequest(req llm.RequestParams) anthropicRequest {
 
 	var toolDefs []anthropicTool
 	for _, tool := range req.ToolDefinitions {
-		toolDefs = append(toolDefs, anthropicTool{Name: tool.Name, Description: tool.Description, InputSchema: tool.Schema})
+		toolDefs = append(
+			toolDefs,
+			anthropicTool{Name: tool.Name, Description: tool.Description, InputSchema: tool.Schema},
+		)
 	}
 
 	return anthropicRequest{
@@ -118,6 +137,11 @@ func buildRequest(req llm.RequestParams) anthropicRequest {
 		MaxTokens:   req.MaxTokens,
 		Temperature: req.Temperature,
 		Tools:       toolDefs}
+}
+
+// Available reports whether an Anthropic API key is set in the environment.
+func Available() bool {
+	return os.Getenv("ANTHROPIC_API_KEY") != ""
 }
 
 func (c *Client) Stream(ctx context.Context, request llm.RequestParams) (<-chan llm.StreamEvent, error) {

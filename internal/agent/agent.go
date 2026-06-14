@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 
 	"github.com/psuijk/golem/internal/conversation"
 	"github.com/psuijk/golem/internal/event"
@@ -9,28 +10,66 @@ import (
 	"github.com/psuijk/golem/internal/tool"
 )
 
+// ModelResolver maps a model ID to the provider that serves it.
+type ModelResolver interface {
+	Resolve(modelID string) (llm.Provider, error)
+}
+
+// Config holds the dependencies and limits for an Agent. Resolver,
+// Dispatcher, and Store are required; MaxTurns and MaxSteps default
+// to 10 if unset.
 type Config struct {
+	Resolver     ModelResolver
 	MaxTurns     int
 	MaxSteps     int
-	Provider     llm.Provider
 	Dispatcher   *tool.Dispatcher
 	Store        *conversation.Store
 	SystemPrompt string
-	Model        string
-	Tools        []llm.ToolDefinition
 }
 
+// Agent orchestrates the LLM-tool loop. It is safe to call Run
+// multiple times on the same Agent; the Store accumulates history
+// across calls.
 type Agent struct {
-	cfg Config
+	cfg   Config
+	tools []llm.ToolDefinition
 }
 
-func New(cfg Config) *Agent {
-	return &Agent{cfg: cfg}
+// New validates the config, builds tool definitions from the dispatcher,
+// and returns a ready-to-use Agent.
+func New(cfg Config) (*Agent, error) {
+
+	if cfg.Resolver == nil {
+		return nil, errors.New("agent: resolver is required")
+	}
+
+	if cfg.Dispatcher == nil {
+		return nil, errors.New("agent: dispatcher is required")
+	}
+
+	if cfg.Store == nil {
+		return nil, errors.New("agent: store is required")
+	}
+
+	if cfg.MaxTurns == 0 {
+		cfg.MaxTurns = 10
+	}
+
+	if cfg.MaxSteps == 0 {
+		cfg.MaxSteps = 10
+	}
+
+	toolInterfaces := cfg.Dispatcher.Tools()
+	tools := make([]llm.ToolDefinition, 0, len(toolInterfaces))
+	for _, t := range toolInterfaces {
+		tools = append(tools, llm.ToolDefinition{Name: t.Name(), Description: t.Description(), Schema: t.Schema()})
+	}
+	return &Agent{cfg: cfg, tools: tools}, nil
 }
 
 // Run kicks off the agent loop: user message → LLM → tools → LLM → ... → done.
 // Returns an event channel the caller consumes for UI.
-func (a *Agent) Run(ctx context.Context, userMessage string) <-chan event.Event {
+func (a *Agent) Run(ctx context.Context, modelID string, userMessage string) <-chan event.Event {
 	out := make(chan event.Event)
 
 	go func() {
@@ -38,6 +77,12 @@ func (a *Agent) Run(ctx context.Context, userMessage string) <-chan event.Event 
 		defer func() { out <- event.TurnCompletedEvent{} }()
 
 		a.cfg.Store.Append(conversation.UserMessage{Text: userMessage})
+
+		p, err := a.cfg.Resolver.Resolve(modelID)
+		if err != nil {
+			out <- event.ErrorEvent{Err: err}
+			return
+		}
 
 		turn := 0
 		step := 0
@@ -51,15 +96,13 @@ func (a *Agent) Run(ctx context.Context, userMessage string) <-chan event.Event 
 			}
 
 			reqParams := llm.RequestParams{
-				Messages: buildMessages(
-					a.cfg.Store.Messages(),
-				),
+				Messages:        buildMessages(a.cfg.Store.Messages()),
 				SystemPrompt:    a.cfg.SystemPrompt,
-				ToolDefinitions: a.cfg.Tools,
-				Model:           a.cfg.Model,
+				ToolDefinitions: a.tools,
+				Model:           modelID,
 			}
 
-			stCh, err := a.cfg.Provider.Stream(ctx, reqParams)
+			stCh, err := p.Stream(ctx, reqParams)
 			if err != nil {
 				out <- event.ErrorEvent{Err: err}
 				return
@@ -126,6 +169,7 @@ func (a *Agent) Run(ctx context.Context, userMessage string) <-chan event.Event 
 	return out
 }
 
+// buildMessages converts conversation history into the LLM wire format.
 func buildMessages(msgs []conversation.Message) []llm.Message {
 	var llmMsgs []llm.Message
 

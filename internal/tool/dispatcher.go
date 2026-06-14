@@ -15,22 +15,34 @@ var ErrToolNotFound = errors.New("tool not found")
 
 // Dispatcher routes tool calls to registered tools and returns their results.
 type Dispatcher struct {
-	registry *Registry
-	policy   *sandbox.Policy
+	tools  map[string]Interface
+	policy *sandbox.Policy
 }
 
-// NewDispatcher returns a Dispatcher that routes tool calls through the given registry.
-func NewDispatcher(r *Registry, p *sandbox.Policy) *Dispatcher {
-	return &Dispatcher{
-		registry: r,
-		policy:   p,
+// NewDispatcher returns a Dispatcher that routes tool calls through the given tools.
+func NewDispatcher(tools []Interface, p *sandbox.Policy) (*Dispatcher, error) {
+	toolMap := make(map[string]Interface, len(tools))
+	for _, t := range tools {
+		name := t.Name()
+		if name == "" {
+			return nil, errors.New("tool has empty name")
+		}
+		if _, exists := toolMap[name]; exists {
+			return nil, fmt.Errorf("tool %q already registered", name)
+		}
+		toolMap[name] = t
 	}
+
+	return &Dispatcher{
+		tools:  toolMap,
+		policy: p,
+	}, nil
 }
 
 // Dispatch looks up a tool by name and executes it with the given input.
 // It returns an error if the tool is not registered or if execution fails.
 func (d *Dispatcher) Dispatch(ctx context.Context, name string, input json.RawMessage) (*Result, error) {
-	t, ok := d.registry.get(name)
+	t, ok := d.tools[name]
 	if !ok {
 		return nil, fmt.Errorf("dispatching %q: %w", name, ErrToolNotFound)
 	}
@@ -52,4 +64,13 @@ func (d *Dispatcher) Dispatch(ctx context.Context, name string, input json.RawMe
 	}
 
 	return result, nil
+}
+
+// Tools returns all registered tool implementations.
+func (d *Dispatcher) Tools() []Interface {
+	tools := make([]Interface, 0, len(d.tools))
+	for _, t := range d.tools {
+		tools = append(tools, t)
+	}
+	return tools
 }

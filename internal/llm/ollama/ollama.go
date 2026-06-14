@@ -13,6 +13,16 @@ import (
 	"github.com/psuijk/golem/internal/llm"
 )
 
+// Known Ollama models. This list is static for now; a future version
+// will discover installed models dynamically via the Ollama API.
+var (
+	Llama32 = llm.Model{ID: "llama3.2:latest", Name: "Llama 3.2", MaxInputTokens: 128000, MaxOutputTokens: 2048}
+	Qwen2   = llm.Model{ID: "qwen2.5:0.5b", Name: "Qwen 2", MaxInputTokens: 32000, MaxOutputTokens: 8000}
+)
+
+// Models lists all known Ollama models.
+var Models = []llm.Model{Llama32, Qwen2}
+
 type ollamaMessage struct {
 	Role      string           `json:"role"`
 	Content   string           `json:"content"`
@@ -148,6 +158,21 @@ func buildRequest(req llm.RequestParams) ollamaRequest {
 	}
 
 	return r
+}
+
+// Available reports whether the Ollama server is reachable at the given
+// base URL. If baseURL is empty, it defaults to http://localhost:11434.
+func Available(baseURL string) bool {
+	if baseURL == "" {
+		baseURL = "http://localhost:11434"
+	}
+
+	resp, err := http.Get(baseURL + "/api/tags")
+	if err != nil {
+		return false
+	}
+	resp.Body.Close()
+	return resp.StatusCode == http.StatusOK
 }
 
 func (c *Client) Stream(ctx context.Context, request llm.RequestParams) (<-chan llm.StreamEvent, error) {
