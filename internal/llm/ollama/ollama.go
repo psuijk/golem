@@ -16,12 +16,13 @@ import (
 // Known Ollama models. This list is static for now; a future version
 // will discover installed models dynamically via the Ollama API.
 var (
-	Llama32 = llm.Model{ID: "llama3.2:latest", Name: "Llama 3.2", MaxInputTokens: 128000, MaxOutputTokens: 2048}
-	Qwen2   = llm.Model{ID: "qwen2.5:0.5b", Name: "Qwen 2", MaxInputTokens: 32000, MaxOutputTokens: 8000}
+	Llama32  = llm.Model{ID: "llama3.2:latest", Name: "Llama 3.2", MaxInputTokens: 128000, MaxOutputTokens: 2048}
+	Qwen330b = llm.Model{ID: "qwen3:30b", Name: "Qwen 3 30b", MaxInputTokens: 32768, MaxOutputTokens: 32768}
+	Qwen255b = llm.Model{ID: "qwen2.5:0.5b", Name: "Qwen 2", MaxInputTokens: 32000, MaxOutputTokens: 8000}
 )
 
 // Models lists all known Ollama models.
-var Models = []llm.Model{Llama32, Qwen2}
+var Models = []llm.Model{Llama32, Qwen330b, Qwen255b}
 
 type ollamaMessage struct {
 	Role      string           `json:"role"`
