@@ -30,6 +30,9 @@ coverage.html
 .DS_Store
 Thumbs.db
 
+# Golem specific
+notes/
+ROADMAP.md
 architecture_ideas.md
 sandbox/
 terminal.log
