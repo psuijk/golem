@@ -56,22 +56,27 @@ type agentDoneMsg struct{}
 
 // Config holds the dependencies the terminal needs to run.
 type Config struct {
-	Agent   *agent.Agent
-	ModelID string
+	Agent        *agent.Agent
+	ModelID      string
+	FullThinking bool // show all thinking tokens instead of a rolling window
 }
 
 // model holds all TUI state. It implements tea.Model (Init, Update, View).
 type model struct {
-	agent     *agent.Agent
-	modelID   string
-	textarea  textarea.Model
-	output    *strings.Builder
-	eventCh   <-chan event.Event
-	cancelRun context.CancelFunc
-	waiting   bool
-	quitting  bool
-	width     int
-	height    int
+	agent        *agent.Agent
+	modelID      string
+	textarea     textarea.Model
+	output       *strings.Builder
+	thinking     *strings.Builder // accumulates thinking tokens separately
+	eventCh      <-chan event.Event
+	cancelRun    context.CancelFunc
+	fullThinking    bool
+	waiting         bool
+	quitting        bool
+	width           int
+	height          int
+	totalInputToks  int
+	totalOutputToks int
 }
 
 var debugLog *log.Logger
@@ -106,10 +111,12 @@ func Run(cfg Config) error {
 	ta.Focus()
 
 	m := model{
-		agent:    cfg.Agent,
-		modelID:  cfg.ModelID,
-		textarea: ta,
-		output:   &strings.Builder{},
+		agent:        cfg.Agent,
+		modelID:      cfg.ModelID,
+		textarea:     ta,
+		output:       &strings.Builder{},
+		thinking:     &strings.Builder{},
+		fullThinking: cfg.FullThinking,
 	}
 
 	p := tea.NewProgram(m, tea.WithAltScreen())
@@ -177,6 +184,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case agentEventMsg:
 		debugLog.Printf("EVENT: %T eventCh=%v", msg.event, m.eventCh)
+		if u, ok := msg.event.(event.UsageEvent); ok {
+			m.totalInputToks += u.InputTokens
+			m.totalOutputToks += u.OutputTokens
+		}
 		m.handleAgentEvent(msg.event)
 		return m, waitForEvent(m.eventCh)
 
@@ -216,14 +227,22 @@ func (m model) View() string {
 		return ""
 	}
 
-	header := headerStyle.Render("golem") + dimStyle.Render(" ("+m.modelID+")")
+	header := headerStyle.Render("golem") + dimStyle.Render(" ("+m.modelID+")") +
+		dimStyle.Render(fmt.Sprintf("  [%d in / %d out]", m.totalInputToks, m.totalOutputToks))
 	output := m.output.String()
 	suggestions := m.renderSuggestions()
+	thinkingWindow := ""
+	if !m.fullThinking {
+		thinkingWindow = m.renderThinkingWindow()
+	}
 
 	// Reserve space: header (1) + gap (1) + input gap (1) + prompt (1) + textarea (3) + padding (1).
 	reserved := 8
 	if suggestions != "" {
 		reserved += strings.Count(suggestions, "\n") + 1
+	}
+	if thinkingWindow != "" {
+		reserved += strings.Count(thinkingWindow, "\n") + 1
 	}
 	outputHeight := m.height - reserved
 	if outputHeight < 1 {
@@ -240,6 +259,10 @@ func (m model) View() string {
 	sb.WriteString(header)
 	sb.WriteString("\n\n")
 	sb.WriteString(visible)
+	if thinkingWindow != "" {
+		sb.WriteString("\n")
+		sb.WriteString(thinkingWindow)
+	}
 	sb.WriteString("\n\n> ")
 	sb.WriteString(m.textarea.View())
 	if suggestions != "" {
@@ -276,11 +299,18 @@ func (m model) handleCommand(input string) (tea.Model, tea.Cmd) {
 func (m model) handleAgentEvent(ev event.Event) {
 	switch e := ev.(type) {
 	case event.ThinkingDeltaEvent:
-		m.output.WriteString(dimStyle.Render(e.Text))
+		if m.fullThinking {
+			m.output.WriteString(dimStyle.Render(e.Text))
+		} else {
+			m.thinking.WriteString(e.Text)
+		}
 	case event.TextDeltaEvent:
+		if !m.fullThinking && m.thinking.Len() > 0 {
+			m.thinking.Reset()
+		}
 		m.output.WriteString(e.Text)
 	case event.ToolCallStartedEvent:
-		m.output.WriteString("\n" + toolStyle.Render("⟩ "+e.Name) + " ")
+		m.output.WriteString("\n" + toolStyle.Render("⟩ "+e.Name+" ") + dimStyle.Render(string(e.Input)) + "\n")
 	case event.ToolCallCompletedEvent:
 		if e.IsError {
 			m.output.WriteString(errorStyle.Render("✗ "+e.Text) + "\n")
@@ -298,6 +328,37 @@ func (m model) handleAgentEvent(ev event.Event) {
 	case event.ErrorEvent:
 		m.output.WriteString(errorStyle.Render("Error: "+e.Err.Error()) + "\n")
 	}
+}
+
+// thinkingWindowLines is the number of rolling lines shown in the
+// View when fullThinking is false.
+const thinkingWindowLines = 2
+
+// renderThinkingWindow returns the last thinkingWindowLines of the
+// accumulated thinking text, or empty string if not thinking.
+func (m model) renderThinkingWindow() string {
+	if m.thinking.Len() == 0 {
+		return ""
+	}
+	text := m.thinking.String()
+	lines := strings.Split(text, "\n")
+	if len(lines) > thinkingWindowLines {
+		lines = lines[len(lines)-thinkingWindowLines:]
+	}
+	maxWidth := m.width - 4
+	if maxWidth < 20 {
+		maxWidth = 80
+	}
+	var sb strings.Builder
+	sb.WriteString(dimStyle.Render("thinking...") + "\n")
+	for _, line := range lines {
+		if len(line) > maxWidth {
+			line = line[:maxWidth]
+		}
+		sb.WriteString(dimStyle.Render(line))
+		sb.WriteString("\n")
+	}
+	return sb.String()
 }
 
 // matchingCommands returns slash commands that match the given prefix.
