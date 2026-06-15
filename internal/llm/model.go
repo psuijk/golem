@@ -8,4 +8,5 @@ type Model struct {
 	Name            string
 	MaxInputTokens  int
 	MaxOutputTokens int
+	Thinking        bool
 }

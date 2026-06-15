@@ -19,7 +19,7 @@ type RequestParams struct {
 	SystemPrompt    string
 	ToolDefinitions []ToolDefinition
 	Model           string
-	Temperature     float32
+	Temperature     *float32
 	MaxTokens       int
 }
 

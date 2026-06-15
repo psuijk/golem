@@ -1,58 +1,49 @@
 package main
 
 import (
-	"context"
+	"bufio"
+	"bytes"
+	"encoding/json"
 	"fmt"
-	"time"
-
-	"github.com/psuijk/golem/internal/agent"
-	"github.com/psuijk/golem/internal/conversation"
-	"github.com/psuijk/golem/internal/llm"
-	"github.com/psuijk/golem/internal/tool"
-	"github.com/psuijk/golem/internal/tools/bash"
-	"github.com/psuijk/golem/internal/tools/readfile"
+	"net/http"
 )
 
 func main() {
-	// First test: call ollama provider directly
-	fmt.Println("=== Direct provider test ===")
-	r := agent.NewResolver()
-	p, err := r.Resolve("llama3.2:latest")
-	if err != nil {
-		fmt.Printf("resolve error: %v\n", err)
-		return
-	}
-
-	ch, err := p.Stream(context.Background(), llm.RequestParams{
-		Model: "llama3.2:latest",
-		Messages: []llm.Message{
-			{Role: llm.RoleUser, Content: []llm.Content{llm.TextContent{Text: "say hello"}}},
+	body := map[string]interface{}{
+		"model":  "qwen3:30b",
+		"stream": true,
+		"messages": []map[string]string{
+			{"role": "user", "content": "create a file called hello.txt with the content 'hello world'"},
 		},
-	})
+		"tools": []map[string]interface{}{
+			{
+				"type": "function",
+				"function": map[string]interface{}{
+					"name":        "writefile",
+					"description": "Write content to a file",
+					"parameters": map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"path":    map[string]string{"type": "string"},
+							"content": map[string]string{"type": "string"},
+						},
+						"required": []string{"path", "content"},
+					},
+				},
+			},
+		},
+	}
+	data, _ := json.Marshal(body)
+
+	resp, err := http.Post("http://localhost:11434/api/chat", "application/json", bytes.NewReader(data))
 	if err != nil {
-		fmt.Printf("stream error: %v\n", err)
+		fmt.Printf("error: %v\n", err)
 		return
 	}
-	for ev := range ch {
-		fmt.Printf("[%T] %+v\n", ev, ev)
-	}
+	defer resp.Body.Close()
 
-	// Second test: through agent
-	fmt.Println("\n=== Agent test ===")
-	tools := []tool.Interface{
-		bash.New(30 * time.Second),
-		readfile.New(1 << 20),
-	}
-	d, _ := tool.NewDispatcher(tools, nil)
-	r2 := agent.NewResolver()
-	a, _ := agent.New(agent.Config{
-		Resolver:   r2,
-		Dispatcher: d,
-		Store:      conversation.New(),
-	})
-
-	ch2 := a.Run(context.Background(), "llama3.2:latest", "say hello")
-	for ev := range ch2 {
-		fmt.Printf("[%T] %+v\n", ev, ev)
+	scanner := bufio.NewScanner(resp.Body)
+	for scanner.Scan() {
+		fmt.Println(scanner.Text())
 	}
 }

@@ -14,6 +14,8 @@ import (
 	"github.com/psuijk/golem/internal/llm/ollama"
 )
 
+func floatPtr(f float32) *float32 { return &f }
+
 func TestStreamLive(t *testing.T) {
 	host := os.Getenv("OLLAMA_HOST")
 	if host == "" {
@@ -31,7 +33,7 @@ func TestStreamLive(t *testing.T) {
 		Model:        model,
 		SystemPrompt: "You are a helpful assistant. Respond in one short sentence.",
 		MaxTokens:    64,
-		Temperature:  0.0,
+		Temperature:  floatPtr(0.0),
 		Messages: []llm.Message{
 			{
 				Role: llm.RoleUser,
@@ -98,7 +100,7 @@ func TestStreamWithTools(t *testing.T) {
 		Model:        model,
 		SystemPrompt: "You are a helpful assistant. When asked to read a file, always use the readfile tool.",
 		MaxTokens:    256,
-		Temperature:  0.0,
+		Temperature:  floatPtr(0.0),
 		Messages: []llm.Message{
 			{
 				Role: llm.RoleUser,

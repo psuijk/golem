@@ -23,9 +23,22 @@ var (
 		Name:            "Haiku 4.5",
 		MaxInputTokens:  200000,
 		MaxOutputTokens: 64000,
+		Thinking:        true,
 	}
-	Sonnet46 = llm.Model{ID: "claude-sonnet-4-6", Name: "Sonnet 4.6", MaxInputTokens: 1000000, MaxOutputTokens: 64000}
-	Opus48   = llm.Model{ID: "claude-opus-4-8", Name: "Opus 4.8", MaxInputTokens: 1000000, MaxOutputTokens: 128000}
+	Sonnet46 = llm.Model{
+		ID:              "claude-sonnet-4-6",
+		Name:            "Sonnet 4.6",
+		MaxInputTokens:  1000000,
+		MaxOutputTokens: 64000,
+		Thinking:        true,
+	}
+	Opus48 = llm.Model{
+		ID:              "claude-opus-4-8",
+		Name:            "Opus 4.8",
+		MaxInputTokens:  1000000,
+		MaxOutputTokens: 128000,
+		Thinking:        true,
+	}
 )
 
 // Models lists all supported Anthropic models.
@@ -41,8 +54,15 @@ type sseData struct {
 type sseDelta struct {
 	Type        string `json:"type"`
 	Text        string `json:"text,omitempty"`
+	Thinking    string `json:"thinking,omitempty"`
 	PartialJSON string `json:"partial_json,omitempty"`
 	StopReason  string `json:"stop_reason,omitempty"`
+}
+
+type thinkingConfig struct {
+	Type    string `json:"type"`              // "adaptive" for Opus 4.8/4.7; "enabled" for older
+	Display string `json:"display,omitempty"` // "summarized" to receive text
+	Budget  int    `json:"budget_tokens,omitempty"`
 }
 
 type sseContentBlock struct {
@@ -79,8 +99,9 @@ type anthropicRequest struct {
 	System      string             `json:"system,omitempty"`
 	Stream      bool               `json:"stream"`
 	MaxTokens   int                `json:"max_tokens"`
-	Temperature float32            `json:"temperature"`
+	Temperature *float32           `json:"temperature,omitempty"`
 	Tools       []anthropicTool    `json:"tools,omitempty"`
+	Thinking    *thinkingConfig    `json:"thinking,omitempty"`
 }
 
 type Client struct {
@@ -91,7 +112,7 @@ type Client struct {
 
 func New(client *http.Client, apiKey string, baseURL string) (*Client, error) {
 	if client == nil {
-		client = &http.Client{Timeout: 30 * time.Second}
+		client = &http.Client{Timeout: 600 * time.Second}
 	}
 
 	if apiKey == "" {
@@ -129,6 +150,14 @@ func buildRequest(req llm.RequestParams) anthropicRequest {
 		)
 	}
 
+	var thinkingCfg *thinkingConfig
+	switch req.Model {
+	case Opus48.ID:
+		thinkingCfg = &thinkingConfig{Type: "adaptive", Display: "summarized"}
+	case Sonnet46.ID, Haiku45.ID:
+		thinkingCfg = &thinkingConfig{Type: "enabled", Budget: 10000, Display: "summarized"}
+	}
+
 	return anthropicRequest{
 		Messages:    msgs,
 		Model:       req.Model,
@@ -136,7 +165,9 @@ func buildRequest(req llm.RequestParams) anthropicRequest {
 		Stream:      true,
 		MaxTokens:   req.MaxTokens,
 		Temperature: req.Temperature,
-		Tools:       toolDefs}
+		Tools:       toolDefs,
+		Thinking:    thinkingCfg,
+	}
 }
 
 // Available reports whether an Anthropic API key is set in the environment.
@@ -180,6 +211,7 @@ func (c *Client) Stream(ctx context.Context, request llm.RequestParams) (<-chan 
 		defer resp.Body.Close()
 		defer close(out)
 		scanner := bufio.NewScanner(resp.Body)
+		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 		var eventType string
 		var payload string
 		var toolID string
@@ -209,10 +241,15 @@ func (c *Client) Stream(ctx context.Context, request llm.RequestParams) (<-chan 
 						toolInput.Reset()
 					}
 				case "content_block_delta":
-					if jsonData.Delta.Type == "text_delta" {
+					switch jsonData.Delta.Type {
+					case "text_delta":
 						out <- llm.TextDelta{Text: jsonData.Delta.Text}
-					} else {
+					case "thinking_delta":
+						out <- llm.ThinkingDelta{Text: jsonData.Delta.Thinking}
+					case "input_json_delta":
 						toolInput.WriteString(jsonData.Delta.PartialJSON)
+					case "signature_delta":
+						// capture if you need to round-trip thinking blocks (see #6)
 					}
 				case "content_block_stop":
 					if toolID != "" {
@@ -228,7 +265,9 @@ func (c *Client) Stream(ctx context.Context, request llm.RequestParams) (<-chan 
 				}
 			}
 		}
-
+		if err := scanner.Err(); err != nil {
+			out <- llm.ErrorEvent{Err: fmt.Errorf("anthropic: read stream: %w", err)}
+		}
 	}()
 
 	return out, nil

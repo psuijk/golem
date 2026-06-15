@@ -17,6 +17,12 @@ type TextDeltaEvent struct {
 
 func (TextDeltaEvent) isEvent() {}
 
+type ThinkingDeltaEvent struct {
+	Text string
+}
+
+func (ThinkingDeltaEvent) isEvent() {}
+
 // ToolCallStartedEvent is emitted immediately before the loop dispatches
 // a tool call. Name identifies the tool; Input is the raw JSON arguments.
 type ToolCallStartedEvent struct {

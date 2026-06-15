@@ -2,15 +2,38 @@ package main
 
 import (
 	"log"
+	"os"
+	"path/filepath"
+	"time"
 
 	"github.com/psuijk/golem/internal/agent"
 	"github.com/psuijk/golem/internal/conversation"
+	"github.com/psuijk/golem/internal/sandbox"
 	"github.com/psuijk/golem/internal/terminal"
 	"github.com/psuijk/golem/internal/tool"
+	"github.com/psuijk/golem/internal/tools/bash"
+	"github.com/psuijk/golem/internal/tools/editfile"
+	"github.com/psuijk/golem/internal/tools/readfile"
+	"github.com/psuijk/golem/internal/tools/writefile"
 )
 
 func main() {
-	d, err := tool.NewDispatcher([]tool.Interface{}, nil)
+	wd, err := os.Getwd()
+	if err != nil {
+		log.Fatalf("get working directory: %v", err)
+	}
+	sandboxDir := filepath.Join(wd, "sandbox")
+
+	policy := sandbox.NewPolicy([]sandbox.PathRule{
+		{Path: sandboxDir, Access: sandbox.ReadWrite},
+	})
+
+	d, err := tool.NewDispatcher([]tool.Interface{
+		bash.New(30 * time.Second),
+		readfile.New(1 << 20),
+		writefile.New(),
+		editfile.New(1 << 20),
+	}, policy)
 	if err != nil {
 		log.Fatalf("create dispatcher: %v", err)
 	}

@@ -115,6 +115,8 @@ func (a *Agent) Run(ctx context.Context, modelID string, userMessage string) <-c
 				case llm.TextDelta:
 					assMsg.Text += e.Text
 					out <- event.TextDeltaEvent{Text: e.Text}
+				case llm.ThinkingDelta:
+					out <- event.ThinkingDeltaEvent{Text: e.Text}
 				case llm.ToolUseEvent:
 					assMsg.ToolCalls = append(
 						assMsg.ToolCalls,

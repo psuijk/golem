@@ -2,7 +2,9 @@ package sandbox
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 )
@@ -76,8 +78,16 @@ func NewPolicy(rules []PathRule) *Policy {
 // operation is allowed, or an error describing why it was denied.
 func (p *Policy) ValidatePath(path string, op Operation) error {
 	resolved, err := filepath.EvalSymlinks(path)
-	if err != nil {
-		return fmt.Errorf("fsops: resolve path %q: %w", path, err)
+	if errors.Is(err, os.ErrNotExist) {
+		// File doesn't exist yet (e.g. writing a new file).
+		// Resolve the parent directory instead.
+		resolved, err = filepath.EvalSymlinks((filepath.Dir(path)))
+		if err != nil {
+			return fmt.Errorf("sandbox: resolve path %q: %w", path, err)
+		}
+		resolved = filepath.Join(resolved, filepath.Base((path)))
+	} else if err != nil {
+		return fmt.Errorf("sandbox: resolve path %q: %w", path, err)
 	}
 
 	resolved = filepath.Clean(resolved)
@@ -94,11 +104,11 @@ func (p *Policy) ValidatePath(path string, op Operation) error {
 	}
 
 	if best == nil {
-		return fmt.Errorf("fsops: path %q not under any allowed root", path)
+		return fmt.Errorf("sandbox: path %q not under any allowed root", path)
 	}
 
 	if op == OpWrite && best.Access == ReadOnly {
-		return fmt.Errorf("fsops: write denied, path %q is under read-only root %q", path, best.Path)
+		return fmt.Errorf("sandbox: write denied, path %q is under read-only root %q", path, best.Path)
 	}
 
 	return nil

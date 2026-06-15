@@ -16,9 +16,27 @@ import (
 // Known Ollama models. This list is static for now; a future version
 // will discover installed models dynamically via the Ollama API.
 var (
-	Llama32  = llm.Model{ID: "llama3.2:latest", Name: "Llama 3.2", MaxInputTokens: 128000, MaxOutputTokens: 2048}
-	Qwen330b = llm.Model{ID: "qwen3:30b", Name: "Qwen 3 30b", MaxInputTokens: 32768, MaxOutputTokens: 32768}
-	Qwen255b = llm.Model{ID: "qwen2.5:0.5b", Name: "Qwen 2", MaxInputTokens: 32000, MaxOutputTokens: 8000}
+	Llama32 = llm.Model{
+		ID:              "llama3.2:latest",
+		Name:            "Llama 3.2",
+		MaxInputTokens:  128000,
+		MaxOutputTokens: 2048,
+		Thinking:        false,
+	}
+	Qwen330b = llm.Model{
+		ID:              "qwen3:30b",
+		Name:            "Qwen 3 30b",
+		MaxInputTokens:  32768,
+		MaxOutputTokens: 32768,
+		Thinking:        true,
+	}
+	Qwen255b = llm.Model{
+		ID:              "qwen2.5:0.5b",
+		Name:            "Qwen 2",
+		MaxInputTokens:  32000,
+		MaxOutputTokens: 8000,
+		Thinking:        false,
+	}
 )
 
 // Models lists all known Ollama models.
@@ -27,10 +45,12 @@ var Models = []llm.Model{Llama32, Qwen330b, Qwen255b}
 type ollamaMessage struct {
 	Role      string           `json:"role"`
 	Content   string           `json:"content"`
+	Thinking  string           `json:"thinking,omitempty"`
 	ToolCalls []ollamaToolCall `json:"tool_calls,omitempty"`
 }
 
 type ollamaToolCall struct {
+	ID       string         `json:"id,omitempty"`
 	Function ollamaFunction `json:"function"`
 }
 
@@ -59,8 +79,8 @@ type ollamaRequest struct {
 }
 
 type ollamaOptions struct {
-	Temperature float32 `json:"temperature,omitempty"`
-	NumPredict  int     `json:"num_predict,omitempty"`
+	Temperature *float32 `json:"temperature,omitempty"`
+	NumPredict  int      `json:"num_predict,omitempty"`
 }
 
 type ollamaStreamChunk struct {
@@ -151,7 +171,7 @@ func buildRequest(req llm.RequestParams) ollamaRequest {
 		Tools:    tools,
 	}
 
-	if req.Temperature != 0 || req.MaxTokens != 0 {
+	if req.Temperature != nil || req.MaxTokens != 0 {
 		r.Options = &ollamaOptions{
 			Temperature: req.Temperature,
 			NumPredict:  req.MaxTokens,
@@ -207,6 +227,7 @@ func (c *Client) Stream(ctx context.Context, request llm.RequestParams) (<-chan 
 		defer close(out)
 
 		scanner := bufio.NewScanner(resp.Body)
+		toolCallCount := 0
 		for scanner.Scan() {
 			line := scanner.Text()
 			if line == "" {
@@ -219,21 +240,30 @@ func (c *Client) Stream(ctx context.Context, request llm.RequestParams) (<-chan 
 				return
 			}
 
+			if chunk.Message.Thinking != "" {
+				out <- llm.ThinkingDelta{Text: chunk.Message.Thinking}
+			}
+
 			if chunk.Message.Content != "" {
 				out <- llm.TextDelta{Text: chunk.Message.Content}
 			}
 
-			if chunk.Done {
-				for i, tc := range chunk.Message.ToolCalls {
-					out <- llm.ToolUseEvent{
-						ID:    fmt.Sprintf("call_%d", i),
-						Name:  tc.Function.Name,
-						Input: tc.Function.Arguments,
-					}
+			for _, tc := range chunk.Message.ToolCalls {
+				id := tc.ID
+				if id == "" {
+					id = fmt.Sprintf("call_%d", toolCallCount)
+					toolCallCount++
 				}
+				out <- llm.ToolUseEvent{
+					ID:    id,
+					Name:  tc.Function.Name,
+					Input: tc.Function.Arguments,
+				}
+			}
 
+			if chunk.Done {
 				stopReason := "end_turn"
-				if len(chunk.Message.ToolCalls) > 0 {
+				if toolCallCount > 0 {
 					stopReason = "tool_use"
 				}
 

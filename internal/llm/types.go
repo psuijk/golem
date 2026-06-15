@@ -25,8 +25,8 @@ func (ToolUseContent) isContent() {}
 
 type ToolResultContent struct {
 	ToolCallID string
-	Content   string
-	IsError   bool
+	Content    string
+	IsError    bool
 }
 
 func (ToolResultContent) isContent() {}
@@ -43,6 +43,12 @@ type TextDelta struct {
 }
 
 func (TextDelta) isStreamEvent() {}
+
+type ThinkingDelta struct {
+	Text string
+}
+
+func (ThinkingDelta) isStreamEvent() {}
 
 type ToolUseEvent struct {
 	ID    string

@@ -325,6 +325,43 @@ func TestRunStreamError(t *testing.T) {
 	}
 }
 
+func TestRunWithThinking(t *testing.T) {
+	provider := &mockProvider{
+		responses: [][]llm.StreamEvent{
+			{
+				llm.ThinkingDelta{Text: "let me think..."},
+				llm.ThinkingDelta{Text: " okay got it"},
+				llm.TextDelta{Text: "the answer is 4"},
+				llm.MessageStop{Usage: llm.Usage{InputTokens: 10, OutputTokens: 20}},
+			},
+		},
+	}
+
+	a := newAgent(t, provider, newDispatcher(), conversation.New())
+	events := collect(a.Run(context.Background(), "test-model", "what is 2+2?"))
+
+	// Expect: ThinkingDelta, ThinkingDelta, TextDelta, UsageEvent, TurnCompleted
+	if len(events) != 5 {
+		t.Fatalf("got %d events, want 5: %+v", len(events), events)
+	}
+
+	if td, ok := events[0].(event.ThinkingDeltaEvent); !ok || td.Text != "let me think..." {
+		t.Errorf("events[0] = %+v, want ThinkingDeltaEvent", events[0])
+	}
+	if td, ok := events[1].(event.ThinkingDeltaEvent); !ok || td.Text != " okay got it" {
+		t.Errorf("events[1] = %+v, want ThinkingDeltaEvent", events[1])
+	}
+	if td, ok := events[2].(event.TextDeltaEvent); !ok || td.Text != "the answer is 4" {
+		t.Errorf("events[2] = %+v, want TextDeltaEvent", events[2])
+	}
+	if _, ok := events[3].(event.UsageEvent); !ok {
+		t.Errorf("events[3] = %T, want UsageEvent", events[3])
+	}
+	if _, ok := events[4].(event.TurnCompletedEvent); !ok {
+		t.Errorf("events[4] = %T, want TurnCompletedEvent", events[4])
+	}
+}
+
 func TestRunStoreAccumulates(t *testing.T) {
 	provider := &mockProvider{
 		responses: [][]llm.StreamEvent{
