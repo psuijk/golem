@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"sort"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/textarea"
@@ -155,6 +156,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			input := strings.TrimSpace(m.textarea.Value())
+			debugLog.Printf("ENTER: raw=%q trimmed=%q", m.textarea.Value(), input)
 			if input == "" {
 				return m, nil
 			}
@@ -268,6 +270,7 @@ func (m model) View() string {
 	if suggestions != "" {
 		sb.WriteString("\n")
 		sb.WriteString(suggestions)
+		debugLog.Printf("VIEW: suggestions=%q", suggestions)
 	}
 	return sb.String()
 }
@@ -361,7 +364,8 @@ func (m model) renderThinkingWindow() string {
 	return sb.String()
 }
 
-// matchingCommands returns slash commands that match the given prefix.
+// matchingCommands returns slash commands that match the given prefix,
+// sorted by name length (shortest/closest match first).
 func matchingCommands(prefix string) []slashCommand {
 	var matches []slashCommand
 	for _, c := range commands {
@@ -369,11 +373,20 @@ func matchingCommands(prefix string) []slashCommand {
 			matches = append(matches, c)
 		}
 	}
+	sort.Slice(matches, func(i, j int) bool {
+		return len(matches[i].name) < len(matches[j].name)
+	})
 	return matches
 }
 
+// maxVisibleSuggestions is the maximum number of command suggestions
+// shown below the input at once.
+const maxVisibleSuggestions = 5
+
 // renderSuggestions returns the rendered suggestion list, or an empty
 // string if the input doesn't start with "/" or no commands match.
+// Shows at most maxVisibleSuggestions, always padded to that height
+// to prevent rendering artifacts.
 func (m model) renderSuggestions() string {
 	input := strings.TrimSpace(m.textarea.Value())
 	if !strings.HasPrefix(input, "/") || input == "" {
@@ -386,13 +399,22 @@ func (m model) renderSuggestions() string {
 		return ""
 	}
 
+	visible := matches
+	if len(visible) > maxVisibleSuggestions {
+		visible = visible[:maxVisibleSuggestions]
+	}
+
 	var sb strings.Builder
-	for i, c := range matches {
+	for i, c := range visible {
 		sb.WriteString(commandStyle.Render(c.name))
 		sb.WriteString(dimStyle.Render("  " + c.desc))
-		if i < len(matches)-1 {
+		if i < len(visible)-1 {
 			sb.WriteString("\n")
 		}
+	}
+	// Always pad to maxVisibleSuggestions so the area stays stable.
+	for i := len(visible); i < maxVisibleSuggestions; i++ {
+		sb.WriteString("\n")
 	}
 	return sb.String()
 }
