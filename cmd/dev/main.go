@@ -3,6 +3,7 @@ package main
 import (
 	"log"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/psuijk/golem/internal/agent"
@@ -22,10 +23,11 @@ func main() {
 	if err != nil {
 		log.Fatalf("get working directory: %v", err)
 	}
+	playgrounDir := filepath.Join(wd, "playground")
 
 	r := agent.NewResolver()
 
-	s, err := config.Load(wd)
+	s, err := config.Load(playgrounDir)
 	if err != nil {
 		log.Fatalf("load golem settings: %v", err)
 	}
@@ -41,7 +43,7 @@ func main() {
 		Store:             conversation.New(),
 		Boundaries:        sandbox.NewBoundaries(s.Boundaries),
 		Permissions:       s.Permissions,
-		OnPermissionGrant: func(permKey string) error { return config.AddPermission(wd, permKey) },
+		OnPermissionGrant: func(permKey string) error { return config.AddPermission(playgrounDir, permKey) },
 	})
 	if err != nil {
 		log.Fatalf("create agent: %v", err)

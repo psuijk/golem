@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"slices"
 
+	"github.com/gofrs/flock"
 	"github.com/psuijk/golem/internal/sandbox"
 )
 
@@ -101,4 +102,47 @@ func merge(base, local *Settings) *Settings {
 		Boundaries:  bounds,
 		Permissions: perms,
 	}
+}
+
+// AddPermission appends a permission key to settings.local.json,
+// creating the file and .golem/ directory if they don't exist. If
+// the key is already present, it's a no-op. Uses a file lock to
+// prevent concurrent writes from multiple goroutines or processes.
+func AddPermission(dir string, permKey string) error {
+	golemDir := filepath.Join(dir, ".golem")
+	if err := os.MkdirAll(golemDir, 0755); err != nil {
+		return fmt.Errorf("adding permission: %w", err)
+	}
+
+	lockPath := filepath.Join(golemDir, "settings.local.json.lock")
+	fl := flock.New(lockPath)
+	if err := fl.Lock(); err != nil {
+		return fmt.Errorf("adding permission: lock: %w", err)
+	}
+	defer fl.Unlock()
+
+	path := filepath.Join(golemDir, "settings.local.json")
+
+	settings, err := loadFile(path)
+	if err != nil {
+		return fmt.Errorf("adding permission: %w", err)
+	}
+	if settings == nil {
+		settings = &Settings{Boundaries: make([]sandbox.PathRule, 0), Permissions: make([]string, 0)}
+	}
+
+	if slices.Contains(settings.Permissions, permKey) {
+		return nil
+	}
+	settings.Permissions = append(settings.Permissions, permKey)
+
+	data, err := json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		return fmt.Errorf("adding permission: %w", err)
+	}
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		return fmt.Errorf("adding permission: %w", err)
+	}
+
+	return nil
 }
