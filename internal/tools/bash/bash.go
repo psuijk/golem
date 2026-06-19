@@ -93,4 +93,13 @@ func (t *Tool) Execute(ctx context.Context, input json.RawMessage) (*tool.Result
 	return &tool.Result{Text: text, IsError: isErr}, nil
 }
 
+func (t *Tool) PermissionFromInput(input json.RawMessage) (string, error) {
+	var args bashArgs
+
+	if err := json.Unmarshal(input, &args); err != nil {
+		return "", fmt.Errorf("parse bash input: %w", err)
+	}
+	return fmt.Sprintf("bash(command:%s)", args.Command), nil
+}
+
 var _ tool.Interface = (*Tool)(nil)

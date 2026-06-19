@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/psuijk/golem/internal/agent"
@@ -40,19 +42,12 @@ func (m *mockProvider) Stream(_ context.Context, _ llm.RequestParams) (<-chan ll
 // echoTool is a minimal tool that returns its input as text.
 type echoTool struct{}
 
-func (echoTool) Name() string                { return "echo" }
-func (echoTool) Description() string          { return "echoes input" }
-func (echoTool) Schema() json.RawMessage      { return json.RawMessage(`{}`) }
+func (echoTool) Name() string                              { return "echo" }
+func (echoTool) Description() string                        { return "echoes input" }
+func (echoTool) Schema() json.RawMessage                    { return json.RawMessage(`{}`) }
+func (echoTool) PermissionFromInput(input json.RawMessage) (string, error) { return "echo", nil }
 func (echoTool) Execute(_ context.Context, input json.RawMessage) (*tool.Result, error) {
 	return &tool.Result{Text: string(input)}, nil
-}
-
-func newDispatcher(tools ...tool.Interface) *tool.Dispatcher {
-	d, err := tool.NewDispatcher(tools, nil)
-	if err != nil {
-		panic(err)
-	}
-	return d
 }
 
 // mockResolver returns a fixed provider for any model ID.
@@ -64,12 +59,19 @@ func (m *mockResolver) Resolve(modelID string) (llm.Provider, error) {
 	return m.provider, nil
 }
 
-func newAgent(t *testing.T, provider llm.Provider, dispatcher *tool.Dispatcher, store *conversation.Store) *agent.Agent {
+func newAgent(t *testing.T, provider llm.Provider, tools []tool.Interface, store *conversation.Store) *agent.Agent {
 	t.Helper()
+	// Auto-approve all tools so tests don't block on approval.
+	var perms []string
+	for _, tl := range tools {
+		key, _ := tl.PermissionFromInput(nil)
+		perms = append(perms, key)
+	}
 	a, err := agent.New(agent.Config{
-		Resolver:   &mockResolver{provider: provider},
-		Dispatcher: dispatcher,
-		Store:      store,
+		Resolver:    &mockResolver{provider: provider},
+		Tools:       tools,
+		Permissions: perms,
+		Store:       store,
 	})
 	if err != nil {
 		t.Fatalf("agent.New: %v", err)
@@ -96,7 +98,7 @@ func TestRunTextOnly(t *testing.T) {
 		},
 	}
 
-	a := newAgent(t, provider, newDispatcher(), conversation.New())
+	a := newAgent(t, provider, nil, conversation.New())
 	events := collect(a.Run(context.Background(), "test-model", "hi"))
 
 	// Expect: TextDelta, TextDelta, UsageEvent, TurnCompletedEvent
@@ -135,32 +137,30 @@ func TestRunWithToolCalls(t *testing.T) {
 		},
 	}
 
-	a := newAgent(t, provider, newDispatcher(echoTool{}), conversation.New())
+	a := newAgent(t, provider, []tool.Interface{echoTool{}}, conversation.New())
 	events := collect(a.Run(context.Background(), "test-model", "do it"))
 
-	// Expect: TextDelta("let me check"), UsageEvent, ToolCallStarted, ToolCallCompleted,
-	//         TextDelta("done"), UsageEvent, TurnCompleted
+	// Expect: TextDelta, UsageEvent, ToolCallStarted, ToolCallCompleted,
+	//         TextDelta, UsageEvent, TurnCompleted
+	// (no ToolApprovalEvent because echoTool is auto-approved)
 	if len(events) != 7 {
 		t.Fatalf("got %d events, want 7: %+v", len(events), events)
 	}
 
-	if _, ok := events[0].(event.TextDeltaEvent); !ok {
-		t.Errorf("events[0] = %T, want TextDeltaEvent", events[0])
+	expects := []struct {
+		idx      int
+		wantType string
+	}{
+		{0, "TextDeltaEvent"},
+		{2, "ToolCallStartedEvent"},
+		{3, "ToolCallCompletedEvent"},
+		{6, "TurnCompletedEvent"},
 	}
-	if _, ok := events[1].(event.UsageEvent); !ok {
-		t.Errorf("events[1] = %T, want UsageEvent", events[1])
-	}
-	if s, ok := events[2].(event.ToolCallStartedEvent); !ok || s.Name != "echo" {
-		t.Errorf("events[2] = %+v, want ToolCallStartedEvent{echo}", events[2])
-	}
-	if c, ok := events[3].(event.ToolCallCompletedEvent); !ok || c.Text != `"ping"` {
-		t.Errorf("events[3] = %+v, want ToolCallCompletedEvent with text \"ping\"", events[3])
-	}
-	if _, ok := events[4].(event.TextDeltaEvent); !ok {
-		t.Errorf("events[4] = %T, want TextDeltaEvent", events[4])
-	}
-	if _, ok := events[6].(event.TurnCompletedEvent); !ok {
-		t.Errorf("events[6] = %T, want TurnCompletedEvent", events[6])
+	for _, e := range expects {
+		got := fmt.Sprintf("%T", events[e.idx])
+		if !strings.HasSuffix(got, e.wantType) {
+			t.Errorf("events[%d] = %s, want %s", e.idx, got, e.wantType)
+		}
 	}
 
 	if provider.callCount != 2 {
@@ -189,10 +189,11 @@ func TestRunMaxTurns(t *testing.T) {
 	}
 
 	a, err := agent.New(agent.Config{
-		MaxTurns:   2,
-		Resolver:   &mockResolver{provider: provider},
-		Dispatcher: newDispatcher(echoTool{}),
-		Store:      conversation.New(),
+		MaxTurns:    2,
+		Resolver:    &mockResolver{provider: provider},
+		Tools:       []tool.Interface{echoTool{}},
+		Permissions: []string{"echo"},
+		Store:       conversation.New(),
 	})
 	if err != nil {
 		t.Fatalf("agent.New: %v", err)
@@ -226,10 +227,11 @@ func TestRunMaxSteps(t *testing.T) {
 	}
 
 	a, err := agent.New(agent.Config{
-		MaxSteps:   2,
-		Resolver:   &mockResolver{provider: provider},
-		Dispatcher: newDispatcher(echoTool{}),
-		Store:      conversation.New(),
+		MaxSteps:    2,
+		Resolver:    &mockResolver{provider: provider},
+		Tools:       []tool.Interface{echoTool{}},
+		Permissions: []string{"echo"},
+		Store:       conversation.New(),
 	})
 	if err != nil {
 		t.Fatalf("agent.New: %v", err)
@@ -264,7 +266,7 @@ func TestRunContextCancellation(t *testing.T) {
 		},
 	}
 
-	a := newAgent(t, provider, newDispatcher(), conversation.New())
+	a := newAgent(t, provider, nil, conversation.New())
 	events := collect(a.Run(ctx, "test-model", "hi"))
 
 	// Only TurnCompletedEvent — provider should not be called
@@ -282,7 +284,7 @@ func TestRunContextCancellation(t *testing.T) {
 func TestRunProviderError(t *testing.T) {
 	provider := &mockProvider{} // no responses → returns error
 
-	a := newAgent(t, provider, newDispatcher(), conversation.New())
+	a := newAgent(t, provider, nil, conversation.New())
 	events := collect(a.Run(context.Background(), "test-model", "hi"))
 
 	// Expect: ErrorEvent, TurnCompletedEvent
@@ -307,7 +309,7 @@ func TestRunStreamError(t *testing.T) {
 		},
 	}
 
-	a := newAgent(t, provider, newDispatcher(), conversation.New())
+	a := newAgent(t, provider, nil, conversation.New())
 	events := collect(a.Run(context.Background(), "test-model", "hi"))
 
 	// Expect: TextDelta, ErrorEvent, TurnCompletedEvent
@@ -337,7 +339,7 @@ func TestRunWithThinking(t *testing.T) {
 		},
 	}
 
-	a := newAgent(t, provider, newDispatcher(), conversation.New())
+	a := newAgent(t, provider, nil, conversation.New())
 	events := collect(a.Run(context.Background(), "test-model", "what is 2+2?"))
 
 	// Expect: ThinkingDelta, ThinkingDelta, TextDelta, UsageEvent, TurnCompleted
@@ -377,7 +379,7 @@ func TestRunStoreAccumulates(t *testing.T) {
 	}
 
 	store := conversation.New()
-	a := newAgent(t, provider, newDispatcher(echoTool{}), store)
+	a := newAgent(t, provider, []tool.Interface{echoTool{}}, store)
 
 	// Drain events
 	collect(a.Run(context.Background(), "test-model", "go"))

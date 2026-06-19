@@ -82,5 +82,13 @@ func (t *Tool) PathFromInput(input json.RawMessage) (string, sandbox.Operation, 
 	return args.Path, sandbox.OpWrite, nil
 }
 
+func (t *Tool) PermissionFromInput(input json.RawMessage) (string, error) {
+	var args writeFileArgs
+	if err := json.Unmarshal(input, &args); err != nil {
+		return "", fmt.Errorf("parse writefile input: %w", err)
+	}
+	return fmt.Sprintf("writefile(path:%s)", args.Path), nil
+}
+
 var _ tool.Interface = (*Tool)(nil)
 var _ sandbox.PathValidator = (*Tool)(nil)

@@ -24,26 +24,22 @@ func main() {
 	}
 	sandboxDir := filepath.Join(wd, "sandbox")
 
-	policy := sandbox.NewPolicy([]sandbox.PathRule{
+	bounds := sandbox.NewBoundaries([]sandbox.PathRule{
 		{Path: sandboxDir, Access: sandbox.ReadWrite},
 	})
-
-	d, err := tool.NewDispatcher([]tool.Interface{
-		bash.New(30 * time.Second),
-		readfile.New(1 << 20),
-		writefile.New(),
-		editfile.New(1 << 20),
-	}, policy)
-	if err != nil {
-		log.Fatalf("create dispatcher: %v", err)
-	}
 
 	r := agent.NewResolver()
 
 	a, err := agent.New(agent.Config{
-		Resolver:   r,
-		Dispatcher: d,
-		Store:      conversation.New(),
+		Resolver: r,
+		Tools: []tool.Interface{
+			bash.New(30 * time.Second),
+			readfile.New(1 << 20),
+			writefile.New(),
+			editfile.New(1 << 20),
+		},
+		Boundaries: bounds,
+		Store:  conversation.New(),
 	})
 	if err != nil {
 		log.Fatalf("create agent: %v", err)

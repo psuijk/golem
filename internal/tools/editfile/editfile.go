@@ -133,6 +133,16 @@ func (t *Tool) PathFromInput(input json.RawMessage) (string, sandbox.Operation, 
 	return args.Path, sandbox.OpWrite, nil
 }
 
+func (t *Tool) PermissionFromInput(input json.RawMessage) (string, error) {
+	var args editFileArgs
+
+	if err := json.Unmarshal(input, &args); err != nil {
+		return "", fmt.Errorf("parse editfile input: %w", err)
+	}
+
+	return fmt.Sprintf("editfile(path:%s)", args.Path), nil
+}
+
 // Compile-time assertion that *Tool satisfies the tool.Interface interface.
 var _ tool.Interface = (*Tool)(nil)
 var _ sandbox.PathValidator = (*Tool)(nil)

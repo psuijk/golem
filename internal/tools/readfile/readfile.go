@@ -69,7 +69,10 @@ func (t *Tool) Execute(ctx context.Context, input json.RawMessage) (*tool.Result
 	}
 
 	if info.Size() > t.maxSize {
-		return &tool.Result{Text: fmt.Sprintf("file %s is %d bytes, exceeds max %d", args.Path, info.Size(), t.maxSize), IsError: true}, nil
+		return &tool.Result{
+			Text:    fmt.Sprintf("file %s is %d bytes, exceeds max %d", args.Path, info.Size(), t.maxSize),
+			IsError: true,
+		}, nil
 	}
 
 	data, err := os.ReadFile(args.Path)
@@ -92,6 +95,16 @@ func (t *Tool) PathFromInput(input json.RawMessage) (string, sandbox.Operation, 
 	}
 
 	return args.Path, sandbox.OpRead, nil
+}
+
+func (t *Tool) PermissionFromInput(input json.RawMessage) (string, error) {
+	var args readFileArgs
+
+	if err := json.Unmarshal(input, &args); err != nil {
+		return "", fmt.Errorf("parse readfile input: %w", err)
+	}
+
+	return fmt.Sprintf("readfile(path:%s)", args.Path), nil
 }
 
 var _ tool.Interface = (*Tool)(nil)
