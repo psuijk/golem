@@ -40,8 +40,10 @@ func main() {
 			writefile.New(),
 			editfile.New(1 << 20),
 		},
-		Store:             conversation.New(),
-		Boundaries:        sandbox.NewBoundaries(s.Boundaries),
+		Store: conversation.New(),
+		Boundaries: sandbox.NewBoundaries(
+			append(s.Boundaries, sandbox.PathRule{Path: playgrounDir, Access: sandbox.ReadWrite}),
+		),
 		Permissions:       s.Permissions,
 		OnPermissionGrant: func(permKey string) error { return config.AddPermission(playgrounDir, permKey) },
 	})

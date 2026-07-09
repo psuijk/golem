@@ -165,3 +165,76 @@ func TestSymlinkEscape(t *testing.T) {
 		t.Errorf("error = %v, want to contain 'not under any allowed root'", err)
 	}
 }
+
+func TestWriteNewFileParentExists(t *testing.T) {
+	dir := t.TempDir()
+
+	bounds := sandbox.NewBoundaries([]sandbox.PathRule{
+		{Path: dir, Access: sandbox.ReadWrite},
+	})
+
+	// File doesn't exist but parent dir does.
+	path := filepath.Join(dir, "newfile.txt")
+	if err := bounds.ValidatePath(path, sandbox.OpWrite); err != nil {
+		t.Errorf("expected write to be allowed, got: %v", err)
+	}
+}
+
+func TestWriteNewFileParentNotExists(t *testing.T) {
+	dir := t.TempDir()
+
+	bounds := sandbox.NewBoundaries([]sandbox.PathRule{
+		{Path: dir, Access: sandbox.ReadWrite},
+	})
+
+	// Neither file nor parent dir exist — multi-level walk.
+	path := filepath.Join(dir, "subdir", "deep", "newfile.txt")
+	if err := bounds.ValidatePath(path, sandbox.OpWrite); err != nil {
+		t.Errorf("expected write to be allowed, got: %v", err)
+	}
+}
+
+func TestWriteNewFileNestedOutsideRoot(t *testing.T) {
+	allowed := t.TempDir()
+	outside := t.TempDir()
+
+	bounds := sandbox.NewBoundaries([]sandbox.PathRule{
+		{Path: allowed, Access: sandbox.ReadWrite},
+	})
+
+	// Non-existent nested path outside allowed root — walk should
+	// resolve to an ancestor outside the boundary.
+	path := filepath.Join(outside, "subdir", "deep", "newfile.txt")
+	err := bounds.ValidatePath(path, sandbox.OpWrite)
+	if err == nil {
+		t.Fatal("expected path outside root to be denied, got nil")
+	}
+	if !strings.Contains(err.Error(), "not under any allowed root") {
+		t.Errorf("error = %v, want to contain 'not under any allowed root'", err)
+	}
+}
+
+func TestRelativePathResolution(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "file.txt")
+	if err := os.WriteFile(path, nil, 0644); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	bounds := sandbox.NewBoundaries([]sandbox.PathRule{
+		{Path: dir, Access: sandbox.ReadWrite},
+	})
+
+	// Change to the parent of the temp dir so we can use a relative path.
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	defer os.Chdir(oldWd)
+	os.Chdir(filepath.Dir(dir))
+
+	relPath := filepath.Join(filepath.Base(dir), "file.txt")
+	if err := bounds.ValidatePath(relPath, sandbox.OpRead); err != nil {
+		t.Errorf("expected relative path to be allowed, got: %v", err)
+	}
+}

@@ -25,13 +25,14 @@ const maxToolOutputLen = 200
 
 // Styles for terminal rendering.
 var (
-	toolStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("11"))
-	errorStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
-	dimStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
-	promptStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))
-	headerStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("12"))
-	commandStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("13"))
-	plainText    = lipgloss.NewStyle()
+	toolStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("11"))
+	errorStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
+	dimStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+	promptStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))
+	headerStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("12"))
+	commandStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("13"))
+	approvalStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("14"))
+	plainText     = lipgloss.NewStyle()
 )
 
 // slashCommand describes a slash command for display in the suggestion list.
@@ -62,6 +63,14 @@ type Config struct {
 	FullThinking bool // show all thinking tokens instead of a rolling window
 }
 
+// pendingApproval holds state while waiting for the user to respond
+// to a tool approval prompt.
+type pendingApproval struct {
+	name     string
+	input    string
+	response chan event.ApprovalResponse
+}
+
 // model holds all TUI state. It implements tea.Model (Init, Update, View).
 type model struct {
 	agent        *agent.Agent
@@ -71,6 +80,7 @@ type model struct {
 	thinking     *strings.Builder // accumulates thinking tokens separately
 	eventCh      <-chan event.Event
 	cancelRun    context.CancelFunc
+	approval     *pendingApproval // non-nil when waiting for user to approve a tool call
 	fullThinking    bool
 	waiting         bool
 	quitting        bool
@@ -135,6 +145,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	debugLog.Printf("UPDATE: msg=%T eventCh=%v", msg, m.eventCh)
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
+		// While an approval prompt is active, only handle approval keys.
+		if m.approval != nil {
+			return m.handleApprovalKey(msg)
+		}
+
 		switch msg.Type {
 		case tea.KeyCtrlC:
 			if m.cancelRun != nil {
@@ -189,6 +204,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if u, ok := msg.event.(event.UsageEvent); ok {
 			m.totalInputToks += u.InputTokens
 			m.totalOutputToks += u.OutputTokens
+		}
+		// ToolApprovalEvent requires user input before the agent can
+		// continue. Set the approval state and don't chain the next
+		// waitForEvent — it resumes after the user responds.
+		if a, ok := msg.event.(event.ToolApprovalEvent); ok {
+			m.approval = &pendingApproval{
+				name:     a.Name,
+				input:    string(a.Input),
+				response: a.Response,
+			}
+			m.output.WriteString("\n" + approvalStyle.Render("⟩ "+a.Name+" ") + dimStyle.Render(string(a.Input)) + "\n")
+			m.output.WriteString(approvalStyle.Render("  [y] approve  [n] deny  [a] approve always") + "\n")
+			return m, nil
 		}
 		m.handleAgentEvent(msg.event)
 		return m, waitForEvent(m.eventCh)
@@ -273,6 +301,33 @@ func (m model) View() string {
 		debugLog.Printf("VIEW: suggestions=%q", suggestions)
 	}
 	return sb.String()
+}
+
+// handleApprovalKey processes a keypress while a tool approval prompt
+// is active. Sends the user's decision on the approval's response
+// channel and resumes event processing.
+func (m model) handleApprovalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	var response event.ApprovalResponse
+	var label string
+
+	switch msg.String() {
+	case "y":
+		response = event.ApproveOnce
+		label = "approved"
+	case "n":
+		response = event.Deny
+		label = "denied"
+	case "a":
+		response = event.ApproveAlways
+		label = "approved (always)"
+	default:
+		return m, nil // ignore other keys
+	}
+
+	m.output.WriteString(dimStyle.Render("  → "+label) + "\n")
+	m.approval.response <- response
+	m.approval = nil
+	return m, waitForEvent(m.eventCh)
 }
 
 // handleCommand processes slash commands locally.

@@ -10,9 +10,9 @@ import (
 )
 
 // PathValidator is an optional interface that filesystem-aware tools
-// implement. The dispatcher checks for it before executing a tool --
-// if the tool implements PathValidator and Boundaries are configured,
-// the dispatcher calls PathFromInput to extract the target path and
+// implement. The agent checks for it before executing a tool — if
+// the tool implements PathValidator and Boundaries are configured,
+// the agent calls PathFromInput to extract the target path and
 // operation, then validates against the Boundaries before allowing
 // execution. Tools that don't touch the filesystem don't implement
 // this and are unaffected.
@@ -79,20 +79,30 @@ func NewBoundaries(rules []PathRule) *Boundaries {
 // and matched against rules by longest prefix. Returns nil if the
 // operation is allowed, or an error describing why it was denied.
 func (b *Boundaries) ValidatePath(path string, op Operation) error {
-	resolved, err := filepath.EvalSymlinks(path)
-	if errors.Is(err, os.ErrNotExist) {
-		// File doesn't exist yet (e.g. writing a new file).
-		// Resolve the parent directory instead.
-		resolved, err = filepath.EvalSymlinks(filepath.Dir(path))
-		if err != nil {
-			return fmt.Errorf("boundary: resolve path %q: %w", path, err)
-		}
-		resolved = filepath.Join(resolved, filepath.Base(path))
-	} else if err != nil {
+	absPath, err := filepath.Abs(path)
+	if err != nil {
 		return fmt.Errorf("boundary: resolve path %q: %w", path, err)
 	}
 
-	resolved = filepath.Clean(resolved)
+	dir := absPath
+	resolved, err := filepath.EvalSymlinks(dir)
+
+	for errors.Is(err, os.ErrNotExist) && dir != filepath.Dir(dir) {
+		dir = filepath.Dir(dir)
+		resolved, err = filepath.EvalSymlinks(dir)
+	}
+
+	if err != nil {
+		return fmt.Errorf("boundary: resolve path %q: %w", path, err)
+	}
+
+	rel, err := filepath.Rel(dir, absPath)
+
+	if err != nil {
+		return fmt.Errorf("boundary: resolve path %q: %w", path, err)
+	}
+
+	resolved = filepath.Clean(filepath.Join(resolved, rel))
 
 	var best *PathRule
 
