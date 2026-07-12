@@ -236,6 +236,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cancelRun()
 			m.cancelRun = nil
 		}
+		m.thinking.Reset()
 		m.eventCh = nil
 		m = m.flushBlock()
 		if len(m.inputQueue) != 0 {
@@ -362,23 +363,18 @@ func (m model) View() string {
 // channel and resumes event processing.
 func (m model) handleApprovalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	var response event.ApprovalResponse
-	var label string
 
 	switch msg.String() {
 	case "y":
 		response = event.ApproveOnce
-		label = "approved"
 	case "n", "esc":
 		response = event.Deny
-		label = "denied"
 	case "a":
 		response = event.ApproveAlways
-		label = "approved (always)"
 	default:
 		return m, nil // ignore other keys
 	}
 
-	m.thinking.WriteString(dimStyle.Render("  → "+label) + "\n")
 	m.approval.response <- response
 	m.approval = nil
 	return m, waitForEvent(m.eventCh, m.runID)

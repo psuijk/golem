@@ -185,7 +185,7 @@ func (a *Agent) Run(ctx context.Context, modelID string, userMessage string) <-c
 				return
 			}
 
-			for _, call := range assMsg.ToolCalls {
+			for i, call := range assMsg.ToolCalls {
 				if ctx.Err() != nil {
 					return
 				}
@@ -194,7 +194,20 @@ func (a *Agent) Run(ctx context.Context, modelID string, userMessage string) <-c
 					return
 				}
 
-				a.dispatch(ctx, out, call.ID, call.Name, call.Input)
+				denied := a.dispatch(ctx, out, call.ID, call.Name, call.Input)
+				if denied {
+					remaining := assMsg.ToolCalls[i+1:]
+					for _, next := range remaining {
+						a.store.Append(
+							conversation.ToolResultMessage{
+								ToolCallID: next.ID,
+								Content:    "skipped — turn stopped",
+								IsError:    true,
+							},
+						)
+					}
+					return
+				}
 				step++
 			}
 
@@ -238,7 +251,7 @@ func (a *Agent) dispatch(
 	id string,
 	name string,
 	input json.RawMessage,
-) {
+) (denied bool) {
 	var content string
 	var isError bool
 	defer func() {
@@ -269,6 +282,7 @@ func (a *Agent) dispatch(
 		case event.Deny:
 			content = "tool use rejected"
 			isError = true
+			denied = true
 			return
 		case event.ApproveOnce:
 			//valid, do nothing
@@ -309,4 +323,5 @@ func (a *Agent) dispatch(
 	}
 
 	content = result.Text
+	return
 }
