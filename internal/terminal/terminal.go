@@ -50,11 +50,12 @@ var commands = []slashCommand{
 
 // agentEventMsg wraps an agent event for delivery through Bubble Tea.
 type agentEventMsg struct {
+	runID int
 	event event.Event
 }
 
 // agentDoneMsg signals that the agent's event channel has closed.
-type agentDoneMsg struct{}
+type agentDoneMsg struct{ runID int }
 
 // Config holds the dependencies the terminal needs to run.
 type Config struct {
@@ -73,14 +74,19 @@ type pendingApproval struct {
 
 // model holds all TUI state. It implements tea.Model (Init, Update, View).
 type model struct {
-	agent        *agent.Agent
-	modelID      string
-	textarea     textarea.Model
-	output       *strings.Builder
-	thinking     *strings.Builder // accumulates thinking tokens separately
-	eventCh      <-chan event.Event
-	cancelRun    context.CancelFunc
-	approval     *pendingApproval // non-nil when waiting for user to approve a tool call
+	runID           int
+	agent           *agent.Agent
+	modelID         string
+	lastInput       string
+	textarea        textarea.Model
+	inputQueue      []string
+	turnStart       int
+	block           *strings.Builder
+	output          []string
+	thinking        *strings.Builder // accumulates thinking tokens separately
+	eventCh         <-chan event.Event
+	cancelRun       context.CancelFunc
+	approval        *pendingApproval // non-nil when waiting for user to approve a tool call
 	fullThinking    bool
 	waiting         bool
 	quitting        bool
@@ -125,7 +131,8 @@ func Run(cfg Config) error {
 		agent:        cfg.Agent,
 		modelID:      cfg.ModelID,
 		textarea:     ta,
-		output:       &strings.Builder{},
+		output:       nil,
+		block:        &strings.Builder{},
 		thinking:     &strings.Builder{},
 		fullThinking: cfg.FullThinking,
 	}
@@ -151,30 +158,29 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		switch msg.Type {
-		case tea.KeyCtrlC:
+		case tea.KeyEsc:
 			if m.cancelRun != nil {
-				m.cancelRun()
-				// Drain the event channel so the agent goroutine
-				// doesn't block on its deferred TurnCompletedEvent send.
-				go func(ch <-chan event.Event) {
-					if ch == nil {
-						return
-					}
-					for range ch {
-					}
-				}(m.eventCh)
+				m.cancelActiveRun()
+				m.output = m.output[:m.turnStart]
+				m.block.Reset()
+				m.thinking.Reset()
+				m.textarea.SetValue(m.lastInput)
+				m.updateTextareaStyle(m.lastInput)
+				m.lastInput = ""
 			}
+			m.waiting = false
+			return m, nil
+		case tea.KeyCtrlC:
+			m.cancelActiveRun()
 			m.quitting = true
 			return m, tea.Quit
 		case tea.KeyEnter:
-			if m.waiting {
-				return m, nil
-			}
 			input := strings.TrimSpace(m.textarea.Value())
 			debugLog.Printf("ENTER: raw=%q trimmed=%q", m.textarea.Value(), input)
 			if input == "" {
 				return m, nil
 			}
+
 			m.textarea.Reset()
 			m.updateTextareaStyle("")
 
@@ -183,14 +189,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m.handleCommand(input)
 			}
 
-			m.output.WriteString(promptStyle.Render("You: ") + input + "\n\n")
-			m.waiting = true
+			if m.waiting {
+				m.inputQueue = append(m.inputQueue, input)
+				return m, nil
+			}
 
-			ctx, cancel := context.WithCancel(context.Background())
-			m.cancelRun = cancel
-			m.eventCh = m.agent.Run(ctx, m.modelID, input)
-			debugLog.Printf("ENTER: started agent, eventCh=%v", m.eventCh)
-			return m, waitForEvent(m.eventCh)
+			return m.startRun(input)
 		}
 
 	case tea.WindowSizeMsg:
@@ -200,6 +204,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case agentEventMsg:
+		if msg.runID != m.runID {
+			return m, nil
+		}
 		debugLog.Printf("EVENT: %T eventCh=%v", msg.event, m.eventCh)
 		if u, ok := msg.event.(event.UsageEvent); ok {
 			m.totalInputToks += u.InputTokens
@@ -214,14 +221,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				input:    string(a.Input),
 				response: a.Response,
 			}
-			m.output.WriteString("\n" + approvalStyle.Render("⟩ "+a.Name+" ") + dimStyle.Render(string(a.Input)) + "\n")
-			m.output.WriteString(approvalStyle.Render("  [y] approve  [n] deny  [a] approve always") + "\n")
 			return m, nil
 		}
-		m.handleAgentEvent(msg.event)
-		return m, waitForEvent(m.eventCh)
+		m = m.handleAgentEvent(msg.event)
+		return m, waitForEvent(m.eventCh, m.runID)
 
 	case agentDoneMsg:
+		if msg.runID != m.runID {
+			return m, nil
+		}
 		debugLog.Printf("DONE")
 		m.waiting = false
 		if m.cancelRun != nil {
@@ -229,7 +237,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cancelRun = nil
 		}
 		m.eventCh = nil
-		m.output.WriteString("\n")
+		m = m.flushBlock()
+		if len(m.inputQueue) != 0 {
+			next := m.inputQueue[0]
+			m.inputQueue = m.inputQueue[1:]
+			return m.startRun(next)
+		}
 		return m, nil
 	}
 
@@ -239,6 +252,37 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	m.textarea, cmd = m.textarea.Update(msg)
 	m.updateTextareaStyle(m.textarea.Value())
 	return m, cmd
+}
+
+func (m model) cancelActiveRun() {
+	if m.cancelRun == nil {
+		return
+	}
+	m.cancelRun()
+	// Drain the event channel so the agent goroutine
+	// doesn't block on its deferred TurnCompletedEvent send.
+	go func(ch <-chan event.Event) {
+		if ch == nil {
+			return
+		}
+		for range ch {
+		}
+	}(m.eventCh)
+}
+
+func (m model) startRun(input string) (tea.Model, tea.Cmd) {
+	// Mark where this turn's entries begin in output, so Esc can truncate
+	// the whole turn back to here.
+	m.turnStart = len(m.output)
+	m.lastInput = input
+	m.block.WriteString(promptStyle.Render("You: ") + input + "\n\n")
+	m.waiting = true
+	ctx, cancel := context.WithCancel(context.Background())
+	m.cancelRun = cancel
+	m.eventCh = m.agent.Run(ctx, m.modelID, input)
+	m.runID++
+	debugLog.Printf("ENTER: started agent, eventCh=%v", m.eventCh)
+	return m, waitForEvent(m.eventCh, m.runID)
 }
 
 // updateTextareaStyle sets the textarea text color based on whether
@@ -259,12 +303,13 @@ func (m model) View() string {
 
 	header := headerStyle.Render("golem") + dimStyle.Render(" ("+m.modelID+")") +
 		dimStyle.Render(fmt.Sprintf("  [%d in / %d out]", m.totalInputToks, m.totalOutputToks))
-	output := m.output.String()
+	block := m.block.String()
 	suggestions := m.renderSuggestions()
 	thinkingWindow := ""
 	if !m.fullThinking {
 		thinkingWindow = m.renderThinkingWindow()
 	}
+	approval := m.renderApproval()
 
 	// Reserve space: header (1) + gap (1) + input gap (1) + prompt (1) + textarea (3) + padding (1).
 	reserved := 8
@@ -274,12 +319,17 @@ func (m model) View() string {
 	if thinkingWindow != "" {
 		reserved += strings.Count(thinkingWindow, "\n") + 1
 	}
-	outputHeight := m.height - reserved
-	if outputHeight < 1 {
-		outputHeight = 1
+	if approval != "" {
+		reserved += strings.Count(approval, "\n") + 1
+	}
+	outputHeight := max(m.height-reserved, 1)
+
+	var lines []string
+	for _, line := range m.output {
+		lines = append(lines, strings.Split(line, "\n")...)
 	}
 
-	lines := strings.Split(output, "\n")
+	lines = append(lines, strings.Split(block, "\n")...)
 	if len(lines) > outputHeight {
 		lines = lines[len(lines)-outputHeight:]
 	}
@@ -292,6 +342,10 @@ func (m model) View() string {
 	if thinkingWindow != "" {
 		sb.WriteString("\n")
 		sb.WriteString(thinkingWindow)
+	}
+	if approval != "" {
+		sb.WriteString("\n")
+		sb.WriteString(approval)
 	}
 	sb.WriteString("\n\n> ")
 	sb.WriteString(m.textarea.View())
@@ -314,7 +368,7 @@ func (m model) handleApprovalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "y":
 		response = event.ApproveOnce
 		label = "approved"
-	case "n":
+	case "n", "esc":
 		response = event.Deny
 		label = "denied"
 	case "a":
@@ -324,10 +378,10 @@ func (m model) handleApprovalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil // ignore other keys
 	}
 
-	m.output.WriteString(dimStyle.Render("  → "+label) + "\n")
+	m.thinking.WriteString(dimStyle.Render("  → "+label) + "\n")
 	m.approval.response <- response
 	m.approval = nil
-	return m, waitForEvent(m.eventCh)
+	return m, waitForEvent(m.eventCh, m.runID)
 }
 
 // handleCommand processes slash commands locally.
@@ -341,24 +395,38 @@ func (m model) handleCommand(input string) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	case "/model":
 		if len(parts) < 2 {
-			m.output.WriteString(dimStyle.Render("Usage: /model <model-id>") + "\n")
+			m.block.WriteString(dimStyle.Render("Usage: /model <model-id>") + "\n")
 			return m, nil
 		}
 		m.modelID = parts[1]
-		m.output.WriteString(dimStyle.Render("Switched to model: "+m.modelID) + "\n")
+		m.block.WriteString(dimStyle.Render("Switched to model: "+m.modelID) + "\n")
 		return m, nil
 	default:
-		m.output.WriteString(errorStyle.Render("Unknown command: "+cmd) + "\n")
+		m.block.WriteString(errorStyle.Render("Unknown command: "+cmd) + "\n")
 		return m, nil
 	}
 }
 
-// handleAgentEvent writes the appropriate output for a single agent event.
-func (m model) handleAgentEvent(ev event.Event) {
+// flushBlock appends the current block to output as a finished entry and
+// resets it. It's a no-op when the block is empty, so a boundary that fires
+// with nothing pending doesn't add a blank entry. Returns the updated model
+// because output is a value field — the append is lost otherwise.
+func (m model) flushBlock() model {
+	if m.block.Len() == 0 {
+		return m
+	}
+	m.output = append(m.output, m.block.String())
+	m.block.Reset()
+	return m
+}
+
+// handleAgentEvent updates the transcript for a single agent event and
+// returns the updated model (needed so output appends persist).
+func (m model) handleAgentEvent(ev event.Event) model {
 	switch e := ev.(type) {
 	case event.ThinkingDeltaEvent:
 		if m.fullThinking {
-			m.output.WriteString(dimStyle.Render(e.Text))
+			m.thinking.WriteString(dimStyle.Render(e.Text))
 		} else {
 			m.thinking.WriteString(e.Text)
 		}
@@ -366,26 +434,45 @@ func (m model) handleAgentEvent(ev event.Event) {
 		if !m.fullThinking && m.thinking.Len() > 0 {
 			m.thinking.Reset()
 		}
-		m.output.WriteString(e.Text)
+		m.block.WriteString(e.Text)
 	case event.ToolCallStartedEvent:
-		m.output.WriteString("\n" + toolStyle.Render("⟩ "+e.Name+" ") + dimStyle.Render(string(e.Input)) + "\n")
+		// A tool call ends the current text block; flush it, then start a
+		// fresh block for the tool header.
+		m = m.flushBlock()
+		m.block.WriteString("\n" + toolStyle.Render("⟩ "+e.Name+" ") + dimStyle.Render(string(e.Input)) + "\n")
 	case event.ToolCallCompletedEvent:
 		if e.IsError {
-			m.output.WriteString(errorStyle.Render("✗ "+e.Text) + "\n")
+			// Denied tools emit no ToolCallStartedEvent, so name the tool
+			// here — otherwise the denial has no indication of which tool.
+			m.block.WriteString(errorStyle.Render("✗ "+e.Name+"→"+e.Text) + "\n")
 		} else {
 			text := e.Text
 			if len(text) > maxToolOutputLen {
 				text = text[:maxToolOutputLen] + "..."
 			}
-			m.output.WriteString(dimStyle.Render(text) + "\n")
+			m.block.WriteString(dimStyle.Render(text) + "\n")
 		}
+		m = m.flushBlock()
 	case event.UsageEvent:
-		m.output.WriteString(dimStyle.Render(
+		m.block.WriteString(dimStyle.Render(
 			fmt.Sprintf("\n[%d in / %d out tokens]", e.InputTokens, e.OutputTokens),
 		) + "\n")
 	case event.ErrorEvent:
-		m.output.WriteString(errorStyle.Render("Error: "+e.Err.Error()) + "\n")
+		m.block.WriteString(errorStyle.Render("Error: "+e.Err.Error()) + "\n")
+		m = m.flushBlock()
 	}
+	return m
+}
+
+// renderApproval returns the pending tool-approval prompt, or "" if no
+// approval is awaiting a decision. Rendered transiently by View — never
+// persisted to the transcript, so it vanishes once resolved.
+func (m model) renderApproval() string {
+	if m.approval == nil {
+		return ""
+	}
+	return approvalStyle.Render("⟩ "+m.approval.name+" ") + dimStyle.Render(m.approval.input) + "\n" +
+		approvalStyle.Render("  [y] approve  [n] deny  [a] approve always")
 }
 
 // thinkingWindowLines is the number of rolling lines shown in the
@@ -477,17 +564,17 @@ func (m model) renderSuggestions() string {
 // waitForEvent returns a Bubble Tea command that reads the next event
 // from the agent's channel. When the channel closes, it returns
 // agentDoneMsg to signal the run is complete.
-func waitForEvent(ch <-chan event.Event) tea.Cmd {
+func waitForEvent(ch <-chan event.Event, id int) tea.Cmd {
 	return func() tea.Msg {
 		debugLog.Printf("WAIT: blocking on channel %v", ch)
 		ev, ok := <-ch
 		debugLog.Printf("WAIT: read ok=%v type=%T", ok, ev)
 		if !ok {
-			return agentDoneMsg{}
+			return agentDoneMsg{runID: id}
 		}
 		if _, done := ev.(event.TurnCompletedEvent); done {
-			return agentDoneMsg{}
+			return agentDoneMsg{runID: id}
 		}
-		return agentEventMsg{event: ev}
+		return agentEventMsg{runID: id, event: ev}
 	}
 }
