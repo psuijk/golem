@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/bubbles/textarea"
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
@@ -22,6 +23,8 @@ import (
 // maxToolOutputLen is the maximum number of characters of tool output
 // shown inline. Longer output is truncated with an ellipsis.
 const maxToolOutputLen = 200
+
+const baseChrome = 6
 
 // Styles for terminal rendering.
 var (
@@ -84,6 +87,7 @@ type model struct {
 	block           *strings.Builder
 	output          []string
 	thinking        *strings.Builder // accumulates thinking tokens separately
+	viewport        viewport.Model
 	eventCh         <-chan event.Event
 	cancelRun       context.CancelFunc
 	approval        *pendingApproval // non-nil when waiting for user to approve a tool call
@@ -135,9 +139,10 @@ func Run(cfg Config) error {
 		block:        &strings.Builder{},
 		thinking:     &strings.Builder{},
 		fullThinking: cfg.FullThinking,
+		viewport:     viewport.New(0, 0),
 	}
 
-	p := tea.NewProgram(m, tea.WithAltScreen())
+	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	_, err := p.Run()
 	return err
 }
@@ -154,7 +159,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		// While an approval prompt is active, only handle approval keys.
 		if m.approval != nil {
-			return m.handleApprovalKey(msg)
+			m, cmd := m.handleApprovalKey(msg)
+			m.syncViewport()
+			return m, cmd
 		}
 
 		switch msg.Type {
@@ -167,6 +174,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.textarea.SetValue(m.lastInput)
 				m.updateTextareaStyle(m.lastInput)
 				m.lastInput = ""
+				m.syncViewport()
 			}
 			m.waiting = false
 			return m, nil
@@ -186,21 +194,34 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			// Slash commands are handled locally, not sent to the agent.
 			if strings.HasPrefix(input, "/") {
-				return m.handleCommand(input)
+				m, cmd := m.handleCommand(input)
+				m.syncViewport()
+				return m, cmd
 			}
 
 			if m.waiting {
 				m.inputQueue = append(m.inputQueue, input)
 				return m, nil
 			}
-
-			return m.startRun(input)
+			m, cmd := m.startRun(input)
+			m.syncViewport()
+			return m, cmd
+		case tea.KeyPgUp, tea.KeyPgDown:
+			var cmd tea.Cmd
+			m.viewport, cmd = m.viewport.Update(msg)
+			return m, cmd
 		}
 
+	case tea.MouseMsg:
+		var cmd tea.Cmd
+		m.viewport, cmd = m.viewport.Update(msg)
+		return m, cmd
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
 		m.textarea.SetWidth(msg.Width)
+		m.viewport.Width = msg.Width
+		m.syncViewport()
 		return m, nil
 
 	case agentEventMsg:
@@ -221,9 +242,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				input:    string(a.Input),
 				response: a.Response,
 			}
+			m.syncViewport()
 			return m, nil
 		}
 		m = m.handleAgentEvent(msg.event)
+		m.syncViewport()
 		return m, waitForEvent(m.eventCh, m.runID)
 
 	case agentDoneMsg:
@@ -239,10 +262,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.thinking.Reset()
 		m.eventCh = nil
 		m = m.flushBlock()
+
+		m.syncViewport()
 		if len(m.inputQueue) != 0 {
 			next := m.inputQueue[0]
 			m.inputQueue = m.inputQueue[1:]
-			return m.startRun(next)
+			m, cmd := m.startRun(next)
+			m.syncViewport()
+			return m, cmd
 		}
 		return m, nil
 	}
@@ -271,7 +298,7 @@ func (m model) cancelActiveRun() {
 	}(m.eventCh)
 }
 
-func (m model) startRun(input string) (tea.Model, tea.Cmd) {
+func (m model) startRun(input string) (model, tea.Cmd) {
 	// Mark where this turn's entries begin in output, so Esc can truncate
 	// the whole turn back to here.
 	m.turnStart = len(m.output)
@@ -296,6 +323,32 @@ func (m *model) updateTextareaStyle(input string) {
 	}
 }
 
+func (m *model) syncViewport() {
+	reserved := baseChrome
+
+	if s := m.renderSuggestions(); s != "" {
+		reserved += strings.Count(s, "\n") + 1
+	}
+	if !m.fullThinking {
+		if t := m.renderThinkingWindow(); t != "" {
+			reserved += strings.Count(t, "\n") + 1
+		}
+	}
+	if a := m.renderApproval(); a != "" {
+		reserved += strings.Count(a, "\n") + 1
+	}
+	content := (strings.Join(m.output, "") + m.block.String())
+	content = lipgloss.NewStyle().Width(m.viewport.Width).Render(content)
+	available := m.height - reserved
+
+	m.viewport.Height = min(lipgloss.Height(content), available)
+	wasAtBottom := m.viewport.AtBottom()
+	m.viewport.SetContent(content)
+	if wasAtBottom {
+		m.viewport.GotoBottom() // follow the stream
+	}
+}
+
 // View renders the current TUI state to the terminal.
 func (m model) View() string {
 	if m.quitting {
@@ -304,42 +357,17 @@ func (m model) View() string {
 
 	header := headerStyle.Render("golem") + dimStyle.Render(" ("+m.modelID+")") +
 		dimStyle.Render(fmt.Sprintf("  [%d in / %d out]", m.totalInputToks, m.totalOutputToks))
-	block := m.block.String()
+
 	suggestions := m.renderSuggestions()
 	thinkingWindow := ""
 	if !m.fullThinking {
 		thinkingWindow = m.renderThinkingWindow()
 	}
 	approval := m.renderApproval()
-
-	// Reserve space: header (1) + gap (1) + input gap (1) + prompt (1) + textarea (3) + padding (1).
-	reserved := 8
-	if suggestions != "" {
-		reserved += strings.Count(suggestions, "\n") + 1
-	}
-	if thinkingWindow != "" {
-		reserved += strings.Count(thinkingWindow, "\n") + 1
-	}
-	if approval != "" {
-		reserved += strings.Count(approval, "\n") + 1
-	}
-	outputHeight := max(m.height-reserved, 1)
-
-	var lines []string
-	for _, line := range m.output {
-		lines = append(lines, strings.Split(line, "\n")...)
-	}
-
-	lines = append(lines, strings.Split(block, "\n")...)
-	if len(lines) > outputHeight {
-		lines = lines[len(lines)-outputHeight:]
-	}
-	visible := strings.Join(lines, "\n")
-
 	var sb strings.Builder
 	sb.WriteString(header)
 	sb.WriteString("\n\n")
-	sb.WriteString(visible)
+	sb.WriteString(m.viewport.View())
 	if thinkingWindow != "" {
 		sb.WriteString("\n")
 		sb.WriteString(thinkingWindow)
@@ -361,7 +389,7 @@ func (m model) View() string {
 // handleApprovalKey processes a keypress while a tool approval prompt
 // is active. Sends the user's decision on the approval's response
 // channel and resumes event processing.
-func (m model) handleApprovalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m model) handleApprovalKey(msg tea.KeyMsg) (model, tea.Cmd) {
 	var response event.ApprovalResponse
 
 	switch msg.String() {
@@ -381,7 +409,7 @@ func (m model) handleApprovalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 // handleCommand processes slash commands locally.
-func (m model) handleCommand(input string) (tea.Model, tea.Cmd) {
+func (m model) handleCommand(input string) (model, tea.Cmd) {
 	parts := strings.Fields(input)
 	cmd := parts[0]
 
